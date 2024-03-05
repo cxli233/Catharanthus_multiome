@@ -1,0 +1,137 @@
+---
+title: "Pixel_intensities"
+author: "Chenxin Li"
+date: "2024-03-04"
+output: html_notebook
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Packages
+```{r}
+library(tidyverse)
+library(readxl)
+
+library(RColorBrewer)
+library(rcartocolor)
+
+library(emmeans)
+library(multcomp)
+```
+
+# Data 
+```{r}
+pixel_data <- read_excel("../Results/Pixel_intensity_R11_R12.xlsx")
+
+pixel_data <- pixel_data %>% 
+  mutate(Trt = factor(Trt, levels = c(
+    "MB", "R11", "R12", "M_R11", "M_R12"
+  )))
+head(pixel_data)
+```
+
+# Stats
+## Summary stats 
+```{r}
+pixel_data_s <- pixel_data %>% 
+  group_by(Trt) %>% 
+  summarise(mean_R_G_ratio = mean(R_G_ratio),
+            sd_R_G_ratio = sd(R_G_ratio)) %>% 
+  ungroup()
+
+pixel_data_s
+```
+## Linear model 
+```{r}
+model_RG <- lm(R_G_ratio ~ Trt, data = pixel_data)
+anova(model_RG)
+```
+```{r}
+est_RG <- emmeans(model_RG, pairwise ~ Trt)
+est_RG$contrasts %>% 
+  as.data.frame()
+```
+```{r}
+lm_results <- cld(est_RG, Letters = letters) %>% 
+  as.data.frame() %>% 
+  mutate(group = str_remove_all(.group, " ")) %>% 
+  mutate(txt_y = case_when(
+    Trt == "MB" ~ 0.15,
+    Trt == "R11" ~ 0.25,
+    Trt == "R12" ~ 0.25,
+    Trt == "M_R11" ~ 0.45,
+    Trt == "M_R12" ~ 0.45
+  ))
+
+lm_results
+```
+
+# Graphs 
+```{r}
+mean_sep_plot <- pixel_data %>% 
+  ggplot(aes(x = Trt, y = R_G_ratio)) +
+  ggbeeswarm::geom_quasirandom(fill = "grey90",
+                               color = "black", alpha = 0.8, size = 2, shape = 21)+
+  stat_summary(geom = "point", fun.data = "mean_se", shape = 4, size = 3,
+               color = brewer.pal(8, "Accent")[6]) +
+  stat_summary(geom = "linerange", fun.data = "mean_se") +
+  geom_text(data = lm_results, aes(y = txt_y, label = group), size = 3.5) +
+  #scale_fill_manual(values = carto_pal(7, "SunsetDark")) +
+  labs(y = "pixel intensity ratio (red/green)",
+       x = NULL) +
+  theme_classic() +
+  theme(legend.position = "none",
+        axis.text.y = element_blank()) +
+  coord_flip()
+
+mean_sep_plot
+```
+
+
+```{r}
+pixel_data_s2 <- pixel_data_s %>% 
+  mutate(TF = case_when(
+    str_detect(Trt, "M") ~ "IDM1",
+    T ~ ""
+  )) %>% 
+  mutate(Rep = case_when(
+    str_detect(Trt, "R11") ~ "DAT-ACR",
+    str_detect(Trt, "R12") ~ "D4H-ACR",
+    str_detect(Trt, "MB") ~ "min. 35S"
+  )) %>% 
+  dplyr::select(Trt, TF, Rep) %>% 
+  pivot_longer(cols = !Trt, names_to = "rows", values_to = "components")
+
+pixel_data_s2
+```
+```{r}
+plot_anno <- pixel_data_s2 %>% 
+  ggplot(aes(x = Trt, y = rows)) +
+  geom_tile(aes(fill = components), alpha = 0.8) +
+  scale_fill_manual(
+    values = c(brewer.pal(8, "Pastel1")[1],
+               brewer.pal(8, "Accent")[6],
+               carto_pal(7, "BluYl")[4],
+               "grey80", "white"),
+    limits = c("DAT-ACR", "D4H-ACR", "IDM1", "min. 35S", "")
+  ) +
+  labs(x = "treatments",
+       y = NULL,
+       fill = NULL) +
+  theme_classic() +
+  theme(axis.text = element_blank()) +
+  coord_flip()
+
+plot_anno
+```
+```{r}
+wrap_plots(plot_anno, mean_sep_plot, ncol = 2, widths = c(0.1, 1),
+           guides = "collect") &
+  theme(legend.position = "top")
+
+ggplot2::ggsave("../Results/R_output/Pixel_intensity_ratios.svg", height = 2.25, width = 3.8)
+ggplot2::ggsave("../Results/R_output/Pixel_intensity_ratios.png", height = 2.25, width = 3.8)
+```
+

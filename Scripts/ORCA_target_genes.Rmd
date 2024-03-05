@@ -1,0 +1,1387 @@
+---
+title: "ORCA_target_genes"
+author: "Chenxin Li"
+date: "2023-02-08"
+output: html_notebook
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Packages 
+```{r}
+library(tidyverse)
+library(readxl)
+
+library(Seurat)
+library(Signac)
+
+library(igraph)
+library(ggraph) 
+
+library(RVenn)
+
+library(RColorBrewer)
+library(rcartocolor)
+library(viridis)
+
+library(patchwork)
+```
+
+# Data 
+## My color palette    
+```{r}
+Bocchi <- c(
+  rgb(242, 201, 213, maxColorValue = 255), # bocchi
+  rgb(180, 62, 68, maxColorValue = 255), # kita 
+  rgb(250, 223, 146, maxColorValue = 255), # nijika
+  rgb(73, 100, 150, maxColorValue = 255), # ryo 
+  rgb(40, 40, 40, maxColorValue = 255), # PA
+  rgb(144, 72, 105, maxColorValue = 255) # kikuri
+  )
+  
+Bocchi
+```
+
+## Multiome object 
+```{r}
+CRO_multiome <- readRDS("../../CRO_multiome/Results/R_output/CRO_multiome.Rds")
+DefaultAssay(CRO_multiome) <- "RNA"
+CRO_multiome
+
+CRO_RNA <- readRDS("../../CRO_multiome/Results/R_output/CRO_RNA.Rds")
+CRO_RNA
+```
+## CRO gene annotation 
+```{r}
+repr_gene_models <- read_delim("../../CRO_multiome/Data/cro_v3_anno/cro_v3.gene_models.repr.gff3", 
+                               delim = "\t", col_names = F, col_types = cols())
+```
+
+```{r}
+repr_loci <- repr_gene_models %>% 
+  dplyr::filter(X3 == "mRNA") %>% 
+  dplyr::select(X1, X4, X5, X7, X9) %>% 
+  separate(X9, c("ID", "Name"), sep = ";") %>% 
+  dplyr::select(-Name) %>% 
+  separate(ID, c("temp", "gene_ID"), sep = "=") %>% 
+  dplyr::select(-temp) %>% 
+  mutate(LocusID = str_sub(gene_ID, start = 1, end = 13)) %>% 
+  mutate(gene_ID = str_replace(gene_ID, "_", "-")) %>% 
+  mutate(LocusID = str_replace(LocusID, "_", "-")) %>% 
+  dplyr::rename(
+    Chr = X1,
+    start = X4,
+    end = X5,
+    strand = X7
+  )
+
+
+head(repr_loci)
+```
+
+## Nearest genes 
+```{r}
+nearest.list <- list.files("../Results/bedtools_out/",
+                           pattern = "*.txt", full.names = T)
+
+nearest.data <- sapply(nearest.list, read_delim, delim = "\t",
+                       col_names = F, col_types = cols(), simplify = F) %>% 
+  bind_rows(.id = "id") %>% 
+  mutate(TF = case_when(
+    str_detect(id, "CaORCA") ~ "CaORCA",
+    str_detect(id, "ORCA3") ~ "ORCA3",
+    str_detect(id, "ORCA4") ~ "ORCA4"
+  )) %>% 
+  mutate(type = case_when(
+    str_detect(id, "all") ~ "all peaks",
+    T ~ "accessible peaks"
+  ))
+
+head(nearest.data)
+
+nearest.data %>% 
+  group_by(TF, type) %>% 
+  dplyr::count()
+```
+
+```{r}
+cro_nearest.genes <-  nearest.data %>% 
+  filter(X8 <= 3000) %>% 
+  filter(str_detect(TF, "^Ca") == F) %>% 
+  separate(X7, c("gene_ID", "Name"), sep = ";") %>% 
+  select(-Name) %>% 
+  mutate(gene_ID = str_remove(gene_ID, "ID=")) %>% 
+  mutate(LocusID = str_sub(gene_ID, start = 1, end = 13)) %>% 
+  mutate(gene_ID = str_replace(gene_ID, "_", "-")) %>% 
+  mutate(LocusID = str_replace(LocusID, "_", "-")) 
+
+head(cro_nearest.genes)
+
+dim(cro_nearest.genes %>% distinct(gene_ID))
+dim(cro_nearest.genes %>% 
+      filter(str_detect(type, "acces")) %>% distinct(gene_ID))
+dim(repr_loci)
+```
+Of 26347 gene models, 15624 are "targets" (within 3-kb) of an ORCA3/4 peak. 
+But only 4268 are within 3-kb of an _accessible_ ORCA3/4 peak. 
+
+
+## Known genes 
+```{r}
+MIA_genes_info <- readRDS(file = "../../CRO_multiome/Data/MIA_genes_info.Rds")
+
+leaf_MIA_genes <- MIA_genes_info %>% 
+  mutate(tag = case_when(
+    str_detect(as.character(gene), "05G028810") ~ "7DLGT",
+    str_detect(as.character(gene), "04G032090") ~ "GPPS(LSU)",
+    str_detect(as.character(gene), "05G017180") ~ "DPAS", 
+    T ~ tag
+    )) %>% 
+  dplyr::filter(is.na(tag) == F) %>% 
+  mutate(order = case_when(
+    str_detect(as.character(gene), "04G032090") ~  9,
+    str_detect(as.character(gene), "05G028810") ~ 15, 
+    str_detect(tag, "THAS2") ~ 40,
+    T ~ order
+  )) %>% 
+  arrange(order) %>%
+  mutate(order2 = case_when(
+    str_detect(as.character(gene), "04G032090") ~  9,
+    str_detect(as.character(gene), "05G028810") ~ 15, 
+    str_detect(as.character(gene), "05G017180") ~ 31,
+    order >= 31 ~ order + 1,
+    T ~ order
+  )) %>% 
+  arrange(order2) %>% 
+  mutate(segment = case_when(
+    str_detect(as.character(gene), "04G032090") ~ "MEP",
+    str_detect(as.character(gene), "05G028810") ~ "Iridoid", 
+    T ~ segment
+  )) %>% 
+  dplyr::filter(is.na(order2) == F) %>% 
+  dplyr::filter(str_detect(as.character(gene), "05G025350") == F) %>% 
+  dplyr::filter(str_detect(as.character(gene), "05G028780") == F) %>% 
+  dplyr::filter(str_detect(tag, "THAS1|THAS3|THAS4|HYS|ISP|GS2") == F) %>% 
+  mutate(tag = case_when(
+    str_detect(tag, "SGD$") ~ "SGD1",
+    #str_detect(tag, "SGD2") ~ "SDG2",
+    str_detect(tag, "GS$") ~ "GS1",
+    str_detect(tag, "MATE") ~ "SLTr",
+    T ~ tag
+  )) %>% 
+  mutate(gene = str_replace_all(gene, "_", "-")) %>% 
+  left_join(repr_loci %>% 
+              dplyr::select(-Chr, -start, -end, -strand), by = c("gene"="LocusID"))
+
+head(leaf_MIA_genes)
+write_excel_csv(leaf_MIA_genes, "../Results/R_outputs/leaf_MIA_genes.csv")
+```
+
+## Co-expressed genes  
+```{r}
+subnetwork_modules <- read_csv("../../CRO_multiome/Results/R_output/Gene_CoExp_Module.csv",
+                              col_types = cols())
+head(subnetwork_modules)
+```
+## Orthogroups
+```{r}
+CRO_CAA_OG <- read_delim(
+  "../../CRO_v3/Results/OF_Results_Apr29/Orthologues/Orthologues_cro_v3.gene_models.repr.pep/cro_v3.gene_models.repr.pep__v__caa_proteins_fixed.tsv", 
+                         delim = "\t", col_names = T, col_types = cols())
+
+head(CRO_CAA_OG)
+```
+
+
+# Expression pattern of ORCA3/4 
+```{r}
+MIA_genes_info %>% 
+  filter(str_detect(tag, "ORCA")) %>% 
+  mutate(gene = str_replace(gene, "_", "-")) %>% 
+  left_join(repr_loci %>% 
+              dplyr::select(-Chr, -start, -end, -strand), by = c("gene"="LocusID"))
+```
+
+```{r}
+leaf_cell_type_assignment <- data.frame(
+  cluster = c(0:15)
+) %>% 
+  mutate(cell_type = case_when(
+    cluster == 0 | 
+      cluster == 1 | 
+      cluster == 3 | 
+      cluster ==7  ~ "Mesophyll",
+    cluster == 2 | 
+      cluster == 5 ~ "Epidermis",
+    cluster == 12 ~ "Guard cells",
+    cluster == 11 |
+      cluster == 6 |
+      cluster == 10 |
+      cluster == 14 |
+      cluster == 15  ~ "Vasculature",
+    cluster == 13 ~ "IPAP",
+      cluster == 8 ~ "Idioblast",
+    T ~ "Unassigned"
+  )) %>% 
+  mutate(cell_type = factor(cell_type, 
+                            levels = c(
+                              "Mesophyll", "Epidermis", "Guard cells",
+                              "Vasculature", 
+                              "IPAP", "Idioblast", "Unassigned"
+                            ))) %>% 
+  mutate(cluster = factor(cluster, levels = c(
+    "0", "1", "3", "7", 
+    "2","5", 
+    "12",
+    "11", "6", "10", "14", "15",
+    "13", "8",
+    "4", "9"
+  )))
+
+Leaf_cell_type_strip <- leaf_cell_type_assignment %>% 
+  ggplot(aes(x = cluster, y = "" )) +
+  geom_tile(aes(fill = cell_type)) +
+  scale_fill_manual(values = c(brewer.pal(6, "Accent"), "grey80")) +
+  labs(fill = "Cell type") +
+  theme_void() +
+  theme(
+    legend.position = "bottom" ,
+    text = element_text(size = 14)
+  )
+```
+
+
+```{r}
+ORCA_dot <- DotPlot(CRO_RNA, features = c("CRO-06G029250.1", "CRO-06G029240.1")) +
+  scale_color_gradientn(colors = c("grey90", carto_pal(7, "Teal"))) +
+  scale_x_discrete(label = c("ORCA3", "ORCA4")) +
+  labs(y = "Cluster",
+       x = NULL) +
+  coord_flip() 
+
+wrap_plots(ORCA_dot, Leaf_cell_type_strip, nrow = 2,
+           heights = c(1, 0.05))
+
+ggsave("../Results/R_outputs/ORCA_expression.svg", height = 4, width = 7, bg = "white")
+ggsave("../Results/R_outputs/ORCA_expression.png", height = 4, width = 7, bg = "white")
+```
+
+# Any known genes that are targets of ORCA? 
+```{r}
+known_accessible <- cro_nearest.genes %>% 
+  inner_join(leaf_MIA_genes, by = "gene_ID") %>% 
+  filter(type == "accessible peaks") %>% 
+  dplyr::rename(peak.start = X2,
+         peak.end = X3.x,
+         gene.start = X5.x,
+         gene.end = X6,
+         distance = X8
+         ) %>% 
+  select(Chr, peak.start, peak.end, gene.start, gene.end, distance, 
+         TF, type, LocusID, cro_v2_id, tag, `function`, order2, segment) %>% 
+  mutate(peak = paste0(Chr, ":", peak.start, "-", peak.end)) 
+
+known_accessible %>% 
+  group_by(tag,TF) %>%
+  dplyr::count() %>% 
+  group_by(tag) %>% 
+  dplyr::count()
+
+head(known_accessible)
+```
+15 genes bound by ORCA3/4. 
+```{r}
+known_accessible %>% 
+  arrange(order2)
+```
+
+# Any co-expressed genes that are targets of ORCA?
+```{r}
+subnetwork_modules <- subnetwork_modules %>% 
+  dplyr::rename(LocusID = gene_ID) %>% 
+  dplyr::rename(gene_ID = X1) %>% 
+  mutate(gene_ID = str_replace(gene_ID, "_", "-"))
+
+head(subnetwork_modules)
+```
+```{r}
+coex_all <- cro_nearest.genes %>% 
+  filter(type == "all peaks") %>% 
+  inner_join(subnetwork_modules, by = c("LocusID", "gene_ID"))
+
+head(coex_all)
+
+coex_acces <- cro_nearest.genes %>% 
+  filter(type == "accessible peaks") %>% 
+  inner_join(subnetwork_modules, by = c("LocusID", "gene_ID"))
+
+head(coex_acces)
+```
+# How does ATAC-seq improve target prediction? 
+## Set operations 
+```{r}
+## Pull vectors 
+subnetwork_genes <- unique(subnetwork_modules$gene_ID)
+
+known_epi_genes <- leaf_MIA_genes %>% 
+  filter(order >= 17 &
+           order <= 37)
+
+all_peak_genes <- unique(cro_nearest.genes %>% 
+  filter(type == "all peaks") %>% 
+    select(gene_ID) %>% 
+    as.vector())
+
+acces_peak_genes <- unique(cro_nearest.genes %>% 
+  filter(type == "accessible peaks") %>% 
+    select(gene_ID) %>% 
+    as.vector())
+```
+
+```{r}
+set_list_all <- list(
+  M = leaf_MIA_genes$gene_ID,
+  D = all_peak_genes$gene_ID
+) 
+
+set_list_acce <- list(
+  M = leaf_MIA_genes$gene_ID,
+  "D+A" = acces_peak_genes$gene_ID
+) 
+
+```
+
+## All DAP-seq peaks 
+```{r}
+phyper(
+  q = length(intersect(leaf_MIA_genes$gene_ID, all_peak_genes$gene_ID)), # intersection size 
+  m = length(leaf_MIA_genes$gene_ID), # known genes
+  n = nrow(repr_gene_models) - length(leaf_MIA_genes$gene_ID), # genes that are not known 
+  k = length(all_peak_genes$gene_ID), # genes near a DAP-seq peak
+  lower.tail = F
+  )
+```
+
+Of ~26k genes in the genome, if we randomly pick ~15k genes, 
+what's the odds of having 29 or more leaf MIA enzymes? 
+9.8e-32
+
+```{r}
+phyper(
+  q = length(intersect(leaf_MIA_genes$gene_ID, acces_peak_genes$gene_ID)), # intersection size 
+  m = length(leaf_MIA_genes$gene_ID), # known genes
+  n = nrow(repr_gene_models) - length(leaf_MIA_genes$gene_ID), # genes that are not known 
+  k = length(acces_peak_genes$gene_ID), # genes near a DAP-seq peak
+  lower.tail = F
+  )
+```
+
+Of ~26k genes in the genome, if we randomly pick ~4260 genes, 
+what's the odds of having 14 or more known leaf MIA enzymes? 
+1.4e-18
+
+```{r}
+all_venn <- ggvenn(Venn(set_list_all),
+       thickness = 0) +
+  theme_void() +
+  theme(legend.position = "none",
+        text = element_text(size = 10)) +
+  ggtitle("\nP<9.8e-32, hypergeometric\nO.R.=1.81")  
+
+acces_venn <- ggvenn(Venn(set_list_acce), thickness = 0,
+                     fill = c(Bocchi[2], "dodgerblue3")) +
+  theme_void() +
+  theme(legend.position = "none",
+        text = element_text(size = 10)) +
+  ggtitle("\nP<1.4e-18, hypergeometric\nO.R.=2.79\n")  
+
+wrap_plots(
+  all_venn,
+  acces_venn,
+  nrow = 2
+)
+
+ggsave("../Results/R_outputs/venn_diagram.svg", height = 7, width = 5)
+ggsave("../Results/R_outputs/venn_diagram.png", height = 7, width = 5)
+```
+There are 40 MIA genes known to be expressed in the leaf. 
+If you look into genes near all DAP-seq peaks, you will find ~3/4 of MIA genes.
+If you look into genes near accessible DAP-seq peaks, you will find more than half. 
+
+## Odds ratios 
+```{r}
+Aa <- length(overlap(Venn(set_list_all)))
+Ba <- length(discern(Venn(set_list_all), slice1 = "M", slice2 = "D"))
+Ca <- length(discern(Venn(set_list_all), slice1 = "D", slice2 = "M"))
+Da <- nrow(CRO_RNA) - Aa - Ba - Ca 
+
+(Aa/Ba)/(Ca/Da)
+```
+
+1.81
+
+```{r}
+Ab <- length(overlap(Venn(set_list_acce)))
+Bb <- length(discern(Venn(set_list_acce), slice1 = "M", slice2 = "D+A"))
+Cb <- length(discern(Venn(set_list_acce), slice1 = "D+A", slice2 = "M"))
+Db <- nrow(CRO_RNA) - Ab - Bb - Cb 
+
+(Ab/Bb)/(Cb/Db)
+```
+
+# Other known genes 
+```{r}
+MIA_genes_info %>% 
+  filter(is.na(tag) == F) %>% 
+  mutate(LocusID = str_replace(gene, "_", "-")) %>% 
+  inner_join(
+    cro_nearest.genes, by = "LocusID"
+  ) %>% 
+  filter(type == "all peaks")
+```
+Look for up-regulated genes when ORCAs are overexpressed.
+
+ 
+# Cell type levle chromatin accessibility of ORCA targets? 
+```{r}
+DefaultAssay(CRO_multiome) <- "MACS2"
+```
+
+## Read DAP coverage plots 
+
+CRO_BH	6807947	19059978	17.859273	
+CRO_BI	7872049	13196982	29.825185	 
+
+
+```{r}
+ORCA3_cov <- read_delim("../Results/bedtools_out/ORCA3.bam.50.bedgraph",
+                        delim = "\t", col_names = F, col_types = cols())
+
+ORCA4_cov <- read_delim("../Results/bedtools_out/ORCA4.bam.50.bedgraph",
+                        delim = "\t", col_names = F, col_types = cols())
+
+Cro_halo_cov <- read_delim("../Results/bedtools_out/CRO_halo.50.bedgraph",
+                        delim = "\t", col_names = F, col_types = cols())
+
+DAP_cov <- rbind(
+  ORCA3_cov %>% 
+    mutate(TF = "ORCA3"),
+  ORCA4_cov %>% 
+    mutate(TF = "ORCA4"),
+  Cro_halo_cov %>% 
+    mutate(TF = "halo")
+) %>% 
+  mutate(TF = factor(TF, levels = c("ORCA3", "ORCA4", "halo")))
+  
+
+head(DAP_cov)
+```
+
+ 
+
+
+## 7DLGT
+Chr5	66310319	66312455	05G028810
+```{r}
+DLGT_DAP <- DAP_cov %>% 
+  filter(X1 == "Chr5") %>% 
+  filter(X2 >= 66310319- 5000) %>% 
+  filter(X3 <= 66312455 + 5000) %>% 
+  ggplot(aes(x = X2, y = X4)) +
+  facet_grid(TF ~., switch = "y") +
+  geom_rect(aes(xmin = X2, xmax = X3, ymin = 0, ymax = X4,
+                fill = TF), color = NA) +
+  scale_fill_manual(values = c("pink2", "gold","grey60")) +
+  xlim(c(66310319- 5000, 66312455 + 5000)) +
+  labs(y = "DAP-seq reads",
+       x = NULL) + 
+  theme_classic() +
+  theme(strip.background = element_blank(),
+        axis.text = element_blank(),
+        strip.text.y.left = element_text(angle = 0),
+        legend.position = "none")
+
+DLGT_DAP
+```
+
+```{r}
+DLGT <- repr_loci %>% 
+  filter(Chr == "Chr5") %>% 
+  filter(start >= 66310319- 3000) %>% 
+  filter(end <= 66312455 + 3000) %>% 
+  mutate(tag = case_when(
+    str_detect(gene_ID, "05G028810") ~ "7-DLGT",
+    T ~ "other"
+  )) %>% 
+  mutate(caret = case_when(
+    strand == "+" ~ ">",
+    T ~ "<"
+  )) %>% 
+  mutate(hjust = case_when(
+    strand == "+" ~ -0.1,
+    T ~ 1.1
+  )) %>% 
+  mutate(caret.pos = case_when(
+    strand == "+" ~ start, 
+    T ~ end
+  )) %>% 
+  mutate(midpoint = (start + end)/2) %>% 
+  ggplot(aes(x = start, y = 1)) +
+  geom_hline(yintercept = 1, size = 1) +
+  geom_rect(aes(xmin = start, xmax = end, fill = tag),
+            ymin = 0.75, ymax = 1.25) +
+  geom_text(aes(x = caret.pos, hjust = hjust, label = caret), size = 4) +
+  geom_text(aes(x = midpoint, hjust = hjust, label = caret), size = 4) +
+  scale_fill_manual(values = c(brewer.pal(8, "Accent")[5], "grey80"),
+                    limits = c("7-DLGT","other")) +
+  labs(x = NULL,
+       y = NULL,
+       fill = "Genes") +
+  xlim(c(66310319- 3000, 66312455 + 3000)) +
+  theme_minimal() +
+  theme(
+    panel.grid = element_blank(),
+    text = element_text(size = 14, color = "black"),
+    axis.text.y = element_blank(),
+    axis.text.x = element_blank(),
+    legend.position = "bottom"
+  )
+
+DLGT
+```
+
+```{r}
+DLGT_cov <- CoveragePlot(region = "Chr5-66310319-66312455", CRO_multiome,
+             extend.upstream = 3000, extend.downstream = 3000,
+             group.by = "cell_type") &
+  scale_fill_manual(values = c(brewer.pal(6, "Accent")[1:3],
+                                brewer.pal(6, "Set2")[6],
+                                brewer.pal(6, "Accent")[5:6],
+                                "grey80")) &
+  xlim(c(66310319- 3000, 66312455 + 3000)) 
+```
+```{r}
+wrap_plots(
+  DLGT_cov, DLGT_DAP, DLGT,
+  nrow = 3,
+  heights = c(1, 0.3, 0.03)
+) &
+  labs(x = NULL) &
+  theme(
+    axis.text.x = element_blank()
+  )
+
+ggsave("../Results/R_outputs/7DLGT_cov.svg", height = 5.5, width = 3.5, bg = "white")
+ggsave("../Results/R_outputs/7DLGT_cov.png", height = 5.5, width = 3.5, bg = "white")
+```
+```{r}
+66312455 + 3000 - 66310319 + 3000
+```
+
+## STR
+Chr3	71684379	71691498 CRO_03G032350
+Chr3	71677828	71679666 CRO_03G032340
+Chr3	71668285	71672478 03G032330
+
+```{r}
+STR_DAP <- DAP_cov %>% 
+  filter(X1 == "Chr3") %>% 
+  filter(X2 >= 71668285- 1000) %>% 
+  filter(X3 <= 71691498 + 1000) %>% 
+  ggplot(aes(x = X2, y = X4)) +
+  facet_grid(TF ~., switch = "y") +
+  geom_rect(aes(xmin = X2, xmax = X3, ymin = 0, ymax = X4,
+                fill = TF)) +
+  scale_fill_manual(values = c("pink2", "gold","grey60")) +
+  xlim(c(71668285- 1000, 71691498 + 1000)) +
+  labs(y = "DAP-seq reads",
+       x = NULL) + 
+  theme_classic() +
+  theme(strip.background = element_blank(),
+        axis.text = element_blank(),
+        strip.text.y.left = element_text(angle = 0),
+        legend.position = "none")
+```
+
+```{r}
+STR_cluster <- repr_loci %>% 
+  filter(Chr == "Chr3") %>% 
+  filter(start >= 71668285- 1000) %>% 
+  filter(end <= 71691498 + 1000) %>% 
+  mutate(tag = case_when(
+    str_detect(gene_ID, "03G032340") ~ "TDC",
+    str_detect(gene_ID, "03G032330") ~ "STR",
+    str_detect(gene_ID, "03G032350") ~ "SLTr",
+    T ~ "other"
+  )) %>% 
+  mutate(caret = case_when(
+    strand == "+" ~ ">",
+    T ~ "<"
+  )) %>% 
+  mutate(hjust = case_when(
+    strand == "+" ~ -0.1,
+    T ~ 1.1
+  )) %>% 
+  mutate(caret.pos = case_when(
+    strand == "+" ~ start, 
+    T ~ end
+  )) %>% 
+  mutate(midpoint = (start + end)/2) %>% 
+  ggplot(aes(x = start, y = 1)) +
+  geom_hline(yintercept = 1, size = 1) +
+  geom_rect(aes(xmin = start, xmax = end, fill = tag),
+            ymin = 0.75, ymax = 1.25) +
+  geom_text(aes(x = caret.pos, hjust = hjust, label = caret), size = 4) +
+  geom_text(aes(x = midpoint, hjust = hjust, label = caret), size = 4) +
+  scale_fill_manual(values = c(brewer.pal(8, "Accent")[c(1,3,5)]),
+                    limits = c("STR", "TDC", "SLTr")) +
+  labs(x = NULL,
+       y = NULL,
+       fill = "Genes") +
+  xlim(c(71668285- 1000, 71691498 + 1000)) +
+  theme_minimal() +
+  theme(
+    panel.grid = element_blank(),
+    text = element_text(size = 14, color = "black"),
+    axis.text.y = element_blank(),
+    axis.text.x = element_blank(),
+    legend.position = "bottom"
+  )
+
+```
+
+```{r}
+STR_cov <- CoveragePlot(region = "Chr3-71668285-71691498", CRO_multiome,
+             extend.upstream = 1000, extend.downstream = 1000,
+             group.by = "cell_type") &
+  scale_fill_manual(values = c(brewer.pal(6, "Accent")[1:3],
+                                brewer.pal(6, "Set2")[6],
+                                brewer.pal(6, "Accent")[5:6],
+                                "grey80")) &
+  xlim(c(71668285- 1000, 71691498 + 1000)) 
+
+```
+
+```{r}
+wrap_plots(
+  STR_cov, STR_DAP, STR_cluster,
+  nrow = 3,
+  heights = c(1, 0.3, 0.03)
+) &
+  labs(x = NULL) &
+  theme(
+    axis.text.x = element_blank()
+  )
+
+ggsave("../Results/R_outputs/STR_cov.svg", height = 5.5, width = 4.2, bg = "white")
+ggsave("../Results/R_outputs/STR_cov.png", height = 5.5, width = 4.2, bg = "white")
+```
+```{r}
+ 71691498 + 1000 - 71668285 + 1000
+```
+
+## Redox2 
+```{r}
+Redox2_DAP <- DAP_cov %>% 
+  filter(X1 == "Chr5") %>% 
+  filter(X2 >= 11149548-2000) %>% 
+  filter(X3 <= 11155799+2000) %>% 
+  ggplot(aes(x = X2, y = X4)) +
+  facet_grid(TF ~., switch = "y") +
+  geom_rect(aes(xmin = X2, xmax = X3, ymin = 0, ymax = X4,
+                fill = TF)) +
+  scale_fill_manual(values = c("pink2", "gold","grey60")) +
+  xlim(c(11149548-2000, 11155799+2000)) +
+  labs(y = "DAP-seq reads",
+       x = NULL) + 
+  theme_classic() +
+  theme(strip.background = element_blank(),
+        axis.text = element_blank(),
+        strip.text.y.left = element_text(angle = 0),
+        legend.position = "none")
+
+```
+
+
+```{r}
+Redox2_gene <- repr_loci %>% 
+  dplyr::filter(Chr == "Chr5") %>% 
+  dplyr::filter(start > 11149548-2000) %>% 
+  dplyr::filter(end < 11155799+2000) %>% 
+  mutate(tag = case_when(
+    str_detect(gene_ID, "05G008760") ~ "Redox2",
+    T ~ "other"
+  )) %>% 
+  mutate(caret = case_when(
+    strand == "+" ~ ">",
+    T ~ "<"
+  )) %>% 
+  mutate(hjust = case_when(
+    strand == "+" ~ -0.1,
+    T ~ 1.1
+  )) %>% 
+  mutate(caret.pos = case_when(
+    strand == "+" ~ start, 
+    T ~ end
+  )) %>% 
+  mutate(midpoint = (start + end)/2) %>% 
+  ggplot(aes(x = start, y = 1)) +
+  geom_hline(yintercept = 1, size = 1) +
+  geom_rect(aes(xmin = start, xmax = end, fill = tag),
+            ymin = 0.75, ymax = 1.25) +
+  geom_text(aes(x = caret.pos, hjust = hjust, label = caret), size = 4) +
+  geom_text(aes(x = midpoint, hjust = hjust, label = caret), size = 4) +
+  scale_fill_manual(values = c(brewer.pal(8, "Accent")[2], "grey80"),
+                    limits = c("Redox2","other")) +
+  labs(x = NULL,
+       y = NULL,
+       fill = "Genes") +
+  xlim(c(11149548-2000, 11155799+2000))  +
+  theme_minimal() +
+  theme(
+    panel.grid = element_blank(),
+    text = element_text(size = 14, color = "black"),
+    axis.text.y = element_blank(),
+    axis.text.x = element_blank(),
+    legend.position = "bottom"
+  )
+```
+
+```{r}
+Redox2_cov <- CoveragePlot(region = "Chr5-11149548-11155799", CRO_multiome,
+             extend.upstream = 2000, extend.downstream = 2000,
+             group.by = "cell_type") &
+  scale_fill_manual(values = c(brewer.pal(6, "Accent")[1:3],
+                                brewer.pal(6, "Set2")[6],
+                                brewer.pal(6, "Accent")[5:6],
+                                "grey80")) &
+ xlim(c(11149548-2000, 11155799+2000))
+```
+
+```{r}
+wrap_plots(
+  Redox2_cov, Redox2_DAP, Redox2_gene,
+  nrow = 3,
+  heights = c(1, 0.3, 0.03)
+)
+
+ggsave("../Results/R_outputs/Redox2_cov.svg", height = 6, width = 3.5, bg = "white")
+ggsave("../Results/R_outputs/Redox2_cov.png", height = 6, width = 3.5, bg = "white")
+```
+## BIS 
+```{r}
+MIA_genes_info %>% 
+  filter(is.na(tag) == F) %>% 
+  filter(segment == "TF")
+```
+
+```{r}
+BIS1_region <- repr_loci %>% 
+  dplyr::filter(Chr == "Chr8") %>% 
+  dplyr::filter(start > 37224833 - 2000) %>% 
+  dplyr::filter(end < 37329223 + 2000) %>% 
+  mutate(tag = case_when(
+    str_detect(gene_ID, "08G020490.1") ~ "BIS1",
+    str_detect(gene_ID, "08G020500.1") ~ "BIS2",
+    str_detect(gene_ID, "08G020510.1") ~ "BIS3",
+    T ~ "other"
+  )) %>% 
+  mutate(caret = case_when(
+    strand == "+" ~ ">",
+    T ~ "<"
+  )) %>% 
+  mutate(hjust = case_when(
+    strand == "+" ~ -0.1,
+    T ~ 1.1
+  )) %>% 
+  mutate(caret.pos = case_when(
+    strand == "+" ~ start, 
+    T ~ end
+  )) %>% 
+  mutate(midpoint = (start + end)/2) %>% 
+  ggplot(aes(x = start, y = 1)) +
+  geom_hline(yintercept = 1, size = 1) +
+  geom_rect(aes(xmin = start, xmax = end, fill = tag),
+            ymin = 0.75, ymax = 1.25) +
+  geom_text(aes(x = caret.pos, hjust = hjust, label = caret), size = 4) +
+  geom_text(aes(x = midpoint, hjust = hjust, label = caret), size = 4) +
+  scale_fill_manual(values = c(brewer.pal(8, "Accent")[1:3], "grey80"),
+                    limits = c("BIS1", "BIS2", "BIS3", "other")) +
+  labs(x = NULL,
+       y = NULL,
+       fill = "Genes") +
+   xlim(c(37224833 - 2000, 37329223 + 2000))   +
+  theme_minimal() +
+  theme(
+    panel.grid = element_blank(),
+    text = element_text(size = 14, color = "black"),
+    axis.text.y = element_blank(),
+    axis.text.x = element_blank(),
+    legend.position = "bottom")
+```
+
+```{r}
+BIS1_cov <- CoveragePlot(region = "Chr8-37224833-37329223", CRO_multiome,
+             extend.upstream = 2000, extend.downstream = 2000,
+             group.by = "cell_type") &
+  scale_fill_manual(values = c(brewer.pal(6, "Accent")[1:3],
+                                brewer.pal(6, "Set2")[6],
+                                brewer.pal(6, "Accent")[5:6],
+                                "grey80")) &
+  xlim(c(37224833 - 2000, 37329223 + 2000))  
+```
+
+```{r}
+BIS_DAP <- DAP_cov %>% 
+  filter(X1 == "Chr8") %>% 
+  filter(X2 >= 37224833 - 2000) %>% 
+  filter(X3 <= 37329223 + 2000) %>% 
+  ggplot(aes(x = X2, y = X4)) +
+  facet_grid(TF ~., switch = "y") +
+  geom_rect(aes(xmin = X2, xmax = X3, ymin = 0, ymax = X4,
+                fill = TF)) +
+  scale_fill_manual(values = c("pink2", "gold","grey60")) +
+  xlim(c(37224833 - 2000, 37329223 + 2000)) +
+  labs(y = "DAP-seq reads",
+       x = NULL) + 
+  theme_classic() +
+  theme(strip.background = element_blank(),
+        axis.text = element_blank(),
+        strip.text.y.left = element_text(angle = 0),
+        legend.position = "none")
+  
+BIS_DAP
+```
+```{r}
+wrap_plots(
+  BIS1_cov, 
+  BIS_DAP, 
+  BIS1_region + 
+    labs(x = "BIS1") +
+    theme(legend.position = "none"),
+  nrow = 3,
+  heights = c(1, 0.3, 0.02)
+) &
+  coord_cartesian(xlim = c(37225062 - 3000,	37228855 + 3000))
+
+ggsave("../Results/R_outputs/BIS1_cov.svg", height = 7, width = 4, bg = "white")
+ggsave("../Results/R_outputs/BIS1_cov.png", height = 7, width = 4, bg = "white")
+```
+
+```{r}
+wrap_plots(
+  BIS1_cov, 
+  BIS_DAP, 
+  BIS1_region + 
+    labs(x = "BIS3") +
+    theme(legend.position = "none"),
+  nrow = 3,
+  heights = c(1, 0.3, 0.02)
+) &
+  coord_cartesian(xlim = c(37325549 - 3000,	37328944 + 3000))
+
+ggsave("../Results/R_outputs/BIS3_cov.svg", height = 7, width = 4, bg = "white")
+ggsave("../Results/R_outputs/BIS3_cov.png", height = 7, width = 4, bg = "white")
+```
+
+## Check ZCT genes 
+Chr7
+7063225
+7064339
+
+Chr1	7708862	7709744
+Chr8	54010138	54010644
+
+```{r}
+ZCT3_locus <- repr_loci %>% 
+  dplyr::filter(Chr == "Chr7") %>% 
+  dplyr::filter(start > 7063225 - 5000) %>% 
+  dplyr::filter(end < 7064339 + 5000) %>% 
+  mutate(tag = case_when(
+    str_detect(gene_ID, "07G007820") ~ "ZCT3",
+    T ~ "other"
+  )) %>% 
+  mutate(caret = case_when(
+    strand == "+" ~ ">",
+    T ~ "<"
+  )) %>% 
+  mutate(hjust = case_when(
+    strand == "+" ~ -0.1,
+    T ~ 1.1
+  )) %>% 
+  mutate(caret.pos = case_when(
+    strand == "+" ~ start, 
+    T ~ end
+  )) %>% 
+  mutate(midpoint = (start + end)/2) %>% 
+  ggplot(aes(x = start, y = 1)) +
+  geom_hline(yintercept = 1, size = 1) +
+  geom_rect(aes(xmin = start, xmax = end, fill = tag),
+            ymin = 0.75, ymax = 1.25) +
+  geom_text(aes(x = caret.pos, hjust = hjust, label = caret), size = 4) +
+  geom_text(aes(x = midpoint, hjust = hjust, label = caret), size = 4) +
+  scale_fill_manual(values = c("tomato1", "grey80"),
+                    limits = c("ZCT3", "other")) +
+  labs(x = NULL,
+       y = NULL,
+       fill = "Genes") +
+   xlim(c(7063225 - 5000, 7064339 + 5000)) +
+  theme_minimal() +
+  theme(
+    panel.grid = element_blank(),
+    text = element_text(size = 14, color = "black"),
+    axis.text.y = element_blank(),
+    axis.text.x = element_blank(),
+    legend.position = "bottom")
+```
+
+
+```{r}
+ZCT3_cov <- CoveragePlot(region = "Chr7-7063225-7064339", CRO_multiome,
+             extend.upstream = 5000, extend.downstream = 5000,
+             group.by = "cell_type") &
+  scale_fill_manual(values = c(brewer.pal(6, "Accent")[1:3],
+                                brewer.pal(6, "Set2")[6],
+                                brewer.pal(6, "Accent")[5:6],
+                                "grey80")) &
+  xlim(c(7063225 - 5000, 7064339 + 5000)) 
+```
+
+```{r}
+ZCT_DAP_cov <- DAP_cov %>% 
+  filter(X1 == "Chr7") %>% 
+  filter(X2 >= 7063225 - 5000) %>% 
+  filter(X3 <= 7064339 + 5000) %>% 
+  ggplot(aes(x = X2, y = X4)) +
+  facet_grid(TF ~., switch = "y") +
+  geom_rect(aes(xmin = X2, xmax = X3, ymin = 0, ymax = X4,
+                fill = TF)) +
+  scale_fill_manual(values = c("pink2", "gold","grey60")) +
+  xlim(c(7063225 - 5000, 7064339 + 5000)) +
+  labs(y = "DAP-seq reads",
+       x = NULL) + 
+  theme_classic() +
+  theme(strip.background = element_blank(),
+        axis.text = element_blank(),
+        strip.text.y.left = element_text(angle = 0),
+        legend.position = "none")
+```
+
+```{r}
+wrap_plots(
+  ZCT3_cov, 
+  ZCT_DAP_cov, 
+  ZCT3_locus,
+  nrow = 3,
+  heights = c(1, 0.3, 0.02)
+)  
+
+ggsave("../Results/R_outputs/zct3_cov.svg", height = 7, width = 4.5, bg = "white")
+ggsave("../Results/R_outputs/zct3_cov.png", height = 7, width = 4.5, bg = "white")
+```
+
+
+## CS
+```{r}
+CS_region <- repr_loci %>% 
+  dplyr::filter(Chr == "Chr3") %>% 
+  dplyr::filter(start > 4645629 - 10000) %>% 
+  dplyr::filter(end < 4647016 + 2000) %>% 
+  mutate(caret = case_when(
+    strand == "+" ~ ">",
+    T ~ "<"
+  )) %>% 
+  mutate(hjust = case_when(
+    strand == "+" ~ -0.1,
+    T ~ 1.1
+  )) %>% 
+  mutate(caret.pos = case_when(
+    strand == "+" ~ start, 
+    T ~ end
+  )) %>% 
+  mutate(midpoint = (start + end)/2) %>% 
+  mutate(tag = case_when(
+    str_detect(gene_ID, "03G003800") ~ "CS",
+    T ~ "other"
+  )) %>% 
+  ggplot(aes(x = start, y = 1)) +
+  geom_hline(yintercept = 1, size = 1) +
+  geom_rect(aes(xmin = start, xmax = end, fill = tag),
+            ymin = 0.75, ymax = 1.25) +
+  geom_text(aes(x = caret.pos, hjust = hjust, label = caret), size = 4) +
+  geom_text(aes(x = midpoint, hjust = hjust, label = caret), size = 4) +
+  scale_fill_manual(values = brewer.pal(n = 8, name = "Accent")[2]) +
+  labs(x = NULL,
+       y = NULL,
+       fill = "Genes") +
+  xlim(c(4645629 - 10000, 4647016 + 2000)) +
+  theme_minimal() +
+  theme(
+    panel.grid = element_blank(),
+    text = element_text(size = 14, color = "black"),
+    axis.text.y = element_blank(),
+    axis.text.x = element_blank(),
+    legend.position = "bottom")
+
+CS_region
+```
+
+```{r}
+DefaultAssay(CRO_multiome) <- "MACS2"
+CS_cov <- CoveragePlot(region = "Chr3-4645629-4647016", CRO_multiome,
+             extend.upstream = 10000, extend.downstream = 2000,
+             group.by = "cell_type") &
+  scale_fill_manual(values = c(brewer.pal(6, "Accent")[1:3],
+                                brewer.pal(6, "Set2")[6],
+                                brewer.pal(6, "Accent")[5:6],
+                                "grey80")) 
+```
+
+```{r}
+CS_DAP_cov <- DAP_cov %>% 
+  filter(X1 == "Chr3") %>% 
+  filter(X2 >= 4645629 - 10000) %>% 
+  filter(X3 <= 4647016 + 2000) %>% 
+  ggplot(aes(x = X2, y = X4)) +
+  facet_grid(TF ~., switch = "y") +
+  geom_rect(aes(xmin = X2, xmax = X3, ymin = 0, ymax = X4,
+                fill = TF)) +
+  scale_fill_manual(values = c("pink2", "gold","grey60")) +
+  xlim(c(4645629 - 10000, 4647016 + 2000)) +
+  labs(y = "DAP-seq reads",
+       x = NULL) + 
+  theme_classic() +
+  theme(strip.background = element_blank(),
+        axis.text = element_blank(),
+        strip.text.y.left = element_text(angle = 0),
+        legend.position = "none")
+
+CS_DAP_cov
+```
+
+```{r}
+wrap_plots(
+  CS_cov, 
+  CS_DAP_cov, 
+  CS_region,
+  nrow = 3,
+  heights = c(1, 0.3, 0.02)
+)  
+
+ggsave("../Results/R_outputs/CS_cov.svg", height = 7, width = 4.5, bg = "white")
+ggsave("../Results/R_outputs/CS_cov.png", height = 7, width = 4.5, bg = "white")
+```
+
+# TS
+```{r}
+leaf_MIA_genes %>% 
+  filter(tag == "TS")
+```
+Chr8	58533890	58535285 + CRO-08G033020.1
+```{r}
+CoveragePlot(region = "Chr8-58533890-58535285", CRO_multiome,
+             extend.upstream = 5000, extend.downstream = 5000,
+             group.by = "cell_type") &
+  scale_fill_manual(values = c(brewer.pal(6, "Accent")[1:3],
+                                brewer.pal(6, "Set2")[6],
+                                brewer.pal(6, "Accent")[5:6],
+                                "grey80")) 
+```
+
+```{r}
+DAP_cov %>% 
+  filter(X1 == "Chr8") %>% 
+  filter(X2 >= 58533890 - 5000) %>% 
+  filter(X3 <= 58535285 + 5000) %>% 
+  ggplot(aes(x = X2, y = X4)) +
+  facet_grid(TF ~., switch = "y") +
+  geom_rect(aes(xmin = X2, xmax = X3, ymin = 0, ymax = X4,
+                fill = TF)) +
+  scale_fill_manual(values = c("pink2", "gold","grey60")) +
+  xlim(c(58533890 - 5000, 58535285 + 5000)) +
+  labs(y = "DAP-seq reads",
+       x = NULL) + 
+  theme_classic() +
+  theme(strip.background = element_blank(),
+        axis.text = element_blank(),
+        strip.text.y.left = element_text(angle = 0),
+        legend.position = "none")
+```
+
+
+# Make gene list for Lorenzo
+```{r}
+funct_anno <- read_delim("../../CRO_v3/Data/cro_v3_anno/cro_v3.functional_annotation.txt",
+                         col_names = F, delim = "\t")
+
+head(funct_anno)
+
+CRO_func_anno_nice <- funct_anno %>% 
+  filter(str_detect(X1, "CRO_")) %>% 
+  mutate(LocusID = str_sub(X1, end = 13)) %>% 
+  distinct(LocusID, .keep_all = T)
+
+head(CRO_func_anno_nice)
+```
+
+```{r}
+putative_targets <- cro_nearest.genes %>% 
+  mutate(LocusID = str_replace(LocusID, "-", "_")) %>% 
+  inner_join(CRO_func_anno_nice %>% 
+               select(-X1) %>% 
+               dplyr::rename(funct_anno = X2), by = "LocusID") %>% 
+  select(-id) %>% 
+  filter(str_detect(type, "acce"))
+
+cro_nearest.genes
+head(putative_targets)
+```
+
+```{r}
+putative_target_transporters <- putative_targets %>% 
+  filter(
+    str_detect(funct_anno, "transport|MATE|multidrug|permease|major")
+  )  
+
+head(putative_target_transporters)
+```
+```{r}
+write_excel_csv(putative_targets, "../Results/R_outputs/putative_ORCA_targets.csv")
+write_excel_csv(putative_target_transporters, 
+                "../Results/R_outputs/putative_ORCA_target_transporters.csv")
+```
+
+
+ 
+
+# Network visualization for CRO 
+## Just ORCA 
+
+```{r}
+cro_TF_edges <- known_accessible %>% 
+  distinct(peak, .keep_all = T) %>% 
+  group_by(TF, tag, LocusID) %>% 
+  dplyr::count()
+
+cro_TF_nodes <- data.frame(
+  tag = unique(c(cro_TF_edges$TF, cro_TF_edges$tag))
+) %>% 
+  left_join(leaf_MIA_genes %>% 
+              select(tag, order2, segment, gene), by = "tag") %>% 
+  mutate(order = case_when(
+    str_detect(tag, "ORCA") ~ 0,
+    T ~ order2
+  )) %>% 
+  mutate(segment = case_when(
+    str_detect(tag, "ORCA") ~ "TF",
+    str_detect(tag, "DPAS") ~ "Alkaloid",
+    T ~ segment
+  )) %>% 
+  mutate(y = case_when(
+    str_detect(tag, "ORCA") ~ 2, 
+    T ~ 1
+  )) %>% 
+  mutate(x = case_when(
+    str_detect(tag, "ORCA3") ~ 12, 
+    str_detect(tag, "ORCA4") ~ 7,
+    T ~ rank(order2)
+  )) %>% 
+  mutate(segment = factor(segment, levels = c(
+    "TF", "MEP", "Iridoid", "Alkaloid", "Late Alkaloid", "Transporter"
+  ))) %>% 
+  mutate(y2 = case_when(
+    segment == "TF" ~ y,
+    T ~ y + (x - mean(x))^2/120
+  )) %>% 
+  mutate(y_adj = case_when(
+    segment == "TF" ~ -0.2,
+    T ~ 1
+  ))
+
+cro_TF_nodes
+```
+
+```{r}
+cro_TF_network <- graph_from_data_frame(cro_TF_edges,
+                                        vertices = cro_TF_nodes,
+                                        directed = T)
+```
+
+
+```{r}
+ggraph(cro_TF_network, x = x, y = y2) +
+  geom_edge_diagonal(color = "grey20", alpha = 0.5,
+                     arrow = arrow(length = unit(0.3, "lines")),
+                     end_cap = circle(0.4, "lines"),
+                     start_cap = circle(0.1, "lines")) +
+  geom_node_point(aes(fill = segment), 
+                  color = "grey90", size = 3, shape = 21, alpha = 0.8) +
+  geom_node_text(aes(label = name), repel = T, size = 3) +
+  scale_fill_manual(values = c(viridis(5), "black"),
+                   limits = c( "TF", "MEP", "Iridoid",
+                             "Alkaloid", "Late Alkaloid","Transporter")) +
+  labs(fill = NULL) +
+  theme_void()
+
+ggsave("../Results/R_outputs/CRO_ORCA_network.svg", height = 3, width = 5, bg = "white")
+ggsave("../Results/R_outputs/CRO_ORCA_network.png", height = 3, width = 5, bg = "white")
+```
+# Along with BIS
+```{r}
+TF_edge_table <- read_excel("../Data/Previously_studied_TFs.xlsx")
+
+
+TF_edge_table <- TF_edge_table %>% 
+  mutate(Evidence = factor(Evidence, levels = c(
+    "O", "O + Sc", "D + A", "D + A + O", "T + O", "T + O + Sc"
+  )))
+
+head(TF_edge_table)
+```
+
+## Build node table 
+```{r}
+cro_TF_nodes_big <- data.frame(
+  tag = unique(c(TF_edge_table$From, TF_edge_table$To))
+) %>% 
+  left_join(leaf_MIA_genes %>% 
+              select(tag, order2, segment, gene), by = "tag") %>% 
+  mutate(order = case_when(
+    str_detect(tag, "ORCA|BIS") ~ 0,
+    T ~ order2
+  )) %>% 
+  mutate(segment = case_when(
+    str_detect(tag, "ORCA|BIS|MYC2") ~ "TF",
+    str_detect(tag, "DPAS") ~ "Alkaloid",
+    T ~ segment
+  )) %>% 
+  mutate(y = case_when(
+    str_detect(tag, "MYC") ~ 2.25,
+    str_detect(tag, "ORCA") ~ 2, 
+    str_detect(tag, "BIS") ~ 1.6,
+    T ~ 1
+  )) %>% 
+  mutate(x = case_when(
+    str_detect(tag, "MYC") ~ 7,
+    str_detect(tag, "BIS1") ~ 9,
+    str_detect(tag, "BIS2") ~ 8,
+    str_detect(tag, "BIS3") ~ 7, 
+    str_detect(tag, "ORCA3") ~ 10, 
+    str_detect(tag, "ORCA4") ~ 11,
+    T ~ rank(order2)
+  )) %>% 
+  mutate(segment = factor(segment, levels = c(
+    "TF", "MEP", "Iridoid", "Alkaloid", "Late Alkaloid", "Transporter"
+  ))) %>% 
+  mutate(y2 = case_when(
+    segment == "TF" ~ y,
+    T ~ y + (x - mean(x))^2/200
+  )) %>% 
+  mutate(y_adj = case_when(
+    segment == "TF" ~ -0.2,
+    T ~ 1
+  ))
+
+head(cro_TF_nodes_big)
+```
+```{r}
+cro_TF_network_big <- graph_from_data_frame(TF_edge_table,
+                                        vertices = cro_TF_nodes_big,
+                                        directed = T)
+```
+
+```{r}
+ggraph(cro_TF_network_big, x = x, y = y2) +
+  geom_edge_diagonal(aes(color = Evidence), alpha = 0.8,
+                     arrow = arrow(length = unit(0.3, "lines")),
+                     end_cap = circle(0.4, "lines"),
+                     start_cap = circle(0.1, "lines")) +
+  geom_node_point(aes(fill = segment), 
+                  color = "grey90", size = 3, shape = 21, alpha = 0.8) +
+  geom_node_text(aes(label = name), repel = T, size = 3) +
+  scale_fill_manual(values = c(viridis(5), "black"),
+                   limits = c( "TF", "MEP", "Iridoid",
+                             "Alkaloid", "Late Alkaloid","Transporter")) +
+  scale_edge_color_manual(values = c(brewer.pal(9, "PuRd")[c(2, 3, 4)],
+                                     brewer.pal(9, "PuBu")[c(6, 7, 9)]),
+                          limits = c(
+                             "O", "O + Sc", "D + A", "D + A + O", "T + O", "T + O + Sc"
+                          )) + 
+  labs(fill = "Stage") +
+  #  guides(
+  #   fill = guide_legend(nrow = 2),
+  #   edge_color = guide_legend(nrow = 2, order = 1)
+  # ) + 
+  theme_void()  +
+  theme(
+    #legend.position = "bottom",
+    #legend.box = "vertical"
+  )
+
+ggsave("../Results/R_outputs/CRO_BIS_ORCA_network.svg", height = 3.5, width = 5, bg = "white")
+ggsave("../Results/R_outputs/CRO_BIS_ORCA_network.png", height = 3.5, width = 5, bg = "white")
+```
+```{r}
+ggraph(cro_TF_network_big, x = x, y = y2) +
+  geom_edge_diagonal(aes(color = Evidence), alpha = 0.8,
+                     arrow = arrow(length = unit(0.3, "lines")),
+                     end_cap = circle(0.4, "lines"),
+                     start_cap = circle(0.1, "lines")) +
+  geom_node_point(aes(fill = segment), 
+                  color = "grey90", size = 3, shape = 21, alpha = 0.8) +
+  geom_node_text(aes(label = name), repel = T, size = 3.2) +
+  scale_fill_manual(values = c(viridis(5), "black"),
+                   limits = c( "TF", "MEP", "Iridoid",
+                             "Alkaloid", "Late Alkaloid","Transporter")) +
+  scale_edge_color_manual(values = c(brewer.pal(9, "PuRd")[c(2, 3, 4)],
+                                     brewer.pal(9, "PuBu")[c(7, 9)]),
+                          limits = c(
+                             "O", "O + Sc", "D + A", "D + A + O", "T + O + Sc"
+                          )) + 
+  labs(fill = "Stage") +
+  theme_void() +
+  theme(text = element_text(size = 11),
+        legend.box = "horizontal")
+
+ggsave("../Results/R_outputs/CRO_BIS_ORCA_network_2.svg", height = 2.6, width = 6.5, bg = "white")
+ggsave("../Results/R_outputs/CRO_BIS_ORCA_network_2.png", height = 2.6, width = 6.5, bg = "white")
+```
+
+
+
+
+
+```{r}
+ggraph(cro_TF_network_big, x = x, y = y2) +
+  geom_node_point(aes(fill = segment), 
+                  color = "grey90", size = 6, shape = 21, alpha = 0.8) +
+  geom_edge_diagonal(aes(color = Evidence), alpha = 0.8,
+                     arrow = arrow(length = unit(0.3, "lines")),
+                     end_cap = circle(0.4, "lines"),
+                     start_cap = circle(0.1, "lines")) +
+# geom_node_text(aes(label = name), repel = T, size = 3) +
+  scale_fill_manual(values = c(viridis(5), "black"),
+                   limits = c( "TF", "MEP", "Iridoid",
+                             "Alkaloid", "Late Alkaloid","Transporter")) +
+  scale_edge_color_manual(values = c(brewer.pal(9, "PuRd")[c(2, 3, 4)],
+                                     brewer.pal(9, "PuBu")[c(7, 9)]),
+                          limits = c(
+                             "O", "O + Sc", "D + A", "D + A + O", "T + O + Sc"
+                          )) + 
+  labs(fill = "Stage") +
+  theme_void() +
+  theme(legend.position = "none")
+
+ggsave("../Results/R_outputs/CRO_BIS_ORCA_network2.svg", height = 2.5, width = 3, bg = "white")
+ggsave("../Results/R_outputs/CRO_BIS_ORCA_network2.png", height = 2.5, width = 3, bg = "white")
+```
+
+
+
+
+
+
+
+

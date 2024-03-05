@@ -1,0 +1,197 @@
+---
+title: "ATAC_preprocessing"
+author: "Chenxin Li"
+date: "11/4/2022"
+output:  
+  html_notebook:
+    number_sections: yes
+    toc: yes
+    toc_float: yes
+  html_document:
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Packages
+```{r}
+library(tidyverse)
+library(Seurat) 
+library(Signac)
+library(readxl)
+
+library(RColorBrewer)
+library(viridis)
+library(rcartocolor)
+
+library(patchwork)
+```
+
+# CRO4
+## Data 
+```{r}
+CRO4_counts <- Read10X_h5(filename = "../Results/CRO_4/outs/filtered_feature_bc_matrix.h5")
+
+CRO4 <- CreateSeuratObject(
+  counts = CRO4_counts$`Gene Expression`,
+  assay = "RNA"
+)
+
+CRO4[["ATAC"]] <- CreateChromatinAssay(
+  counts = CRO4_counts$Peaks,
+  sep = c(":", "-"),
+  fragments = "../Results/CRO_4/outs/atac_fragments.tsv.gz"
+)
+
+CRO4
+```
+ 
+
+## Filter nuclei
+```{r}
+DefaultAssay(CRO4) <- "ATAC"
+CRO4 <- NucleosomeSignal(object = CRO4)
+```
+
+```{r}
+VlnPlot(
+  object = CRO4,
+  features = c('nCount_RNA', 'nCount_ATAC',
+               'nucleosome_signal'),
+  pt.size = 0,
+  ncol = 3
+) 
+
+
+```
+```{r}
+CRO4$nCount_RNA %>% 
+  as.data.frame() %>% 
+  dplyr::rename(nRNA = ".") %>% 
+  dplyr::filter(nRNA < 5000) %>% 
+  ggplot(aes(x = nRNA)) + 
+  geom_histogram(bins = 100, color = "white") +
+  geom_vline(xintercept = 200, color = "tomato1") +
+  theme_classic()
+
+CRO4$nCount_ATAC %>% 
+  as.data.frame() %>% 
+  dplyr::rename(nATAC = ".") %>% 
+  dplyr::filter(nATAC < 10000) %>% 
+  ggplot(aes(x = nATAC)) + 
+  geom_histogram(bins = 100, color = "white") +
+  geom_vline(xintercept = 100, color = "tomato1") +
+  theme_classic()
+```
+
+
+```{r}
+CRO4 <- subset(
+  x = CRO4,
+  subset =  nCount_ATAC < 40000 &
+    nCount_RNA < 5000 &
+    nCount_ATAC > 100 & 
+    nCount_RNA > 200 &
+    nucleosome_signal < 2
+)
+
+CRO4
+```
+
+## GEX processing
+```{r}
+DefaultAssay(CRO4) <- "RNA"
+CRO4 <- SCTransform(CRO4) 
+CRO4 <- RunPCA(CRO4) 
+CRO4 <- RunUMAP(CRO4, dims = 1:50, reduction.name = "umap.rna",
+                reduction.kep = "rnaUMAP_")
+```
+
+## ATAC processing
+```{r}
+DefaultAssay(CRO4) <- "ATAC"
+CRO4 <- FindTopFeatures(CRO4, min.cutoff = "q0")
+CRO4 <- RunTFIDF(CRO4)
+CRO4 <- RunSVD(CRO4)
+CRO4 <- RunUMAP(CRO4, reduction = 'lsi', dims = 2:50, reduction.name = "umap.atac", reduction.key = "atacUMAP_")
+```
+
+## Joint UMAP
+```{r}
+CRO4 <- FindMultiModalNeighbors(
+  object = CRO4,
+  reduction.list = list("pca", "lsi"), 
+  dims.list = list(1:50, 2:50),
+  modality.weight.name = "RNA.weight",
+  verbose = TRUE
+)
+
+# build a joint UMAP visualization
+CRO4 <- RunUMAP(
+  object = CRO4,
+  nn.name = "weighted.nn",
+  reduction.name = "wnn.umap",
+  reduction.key = "wnnUMAP_"
+)
+
+```
+```{r}
+CRO4 <- FindClusters(CRO4, graph.name = "wsnn", algorithm = 3)
+```
+
+
+```{r}
+CRO4_rna <- DimPlot(CRO4, label = TRUE, repel = TRUE, reduction = "umap.rna") +
+  NoLegend() +
+  theme_void() +
+  ggtitle("RNA")
+
+CRO4_atac <- DimPlot(CRO4, label = TRUE, repel = TRUE, reduction = "umap.atac") +
+  NoLegend() +
+  theme_void()+
+  ggtitle("ATAC")
+
+CRO4_joint <- DimPlot(CRO4, label = TRUE, repel = TRUE, reduction = "wnn.umap") +
+  NoLegend() +
+  theme_void() +
+  ggtitle("Joint")
+
+wrap_plots(
+  CRO4_rna, CRO4_atac, CRO4_joint
+) &
+  NoLegend() &
+  theme(plot.title = element_text(hjust = 0.5)) &
+  theme(plot.margin = margin(t = 0, r = 3, b = 0, l = 0.5, unit = "lines")) 
+
+ggsave("../Results/R_output/CRO4_UMAPs.svg", height = 3, width = 8, bg = "white")
+ggsave("../Results/R_output/CRO4_UMAPs.png", height = 3, width = 8, bg = "white")
+```
+# Write out filtered object
+```{r}
+CRO4$run <- "CRO4"
+DefaultAssay(CRO4) <- "RNA"
+
+CRO4
+
+saveRDS(CRO4, "../Results/R_output/CRO4_filtered.Rds")
+```
+
+CRO4: 3390 nuclei
+
+```{r}
+CRO4$nCount_RNA %>% summary()
+CRO4$nFeature_RNA %>% summary()
+
+CRO4$nCount_ATAC %>% summary()
+CRO4$nFeature_ATAC %>% summary()
+```
+
+ 
+
+ 
+
+
+
+

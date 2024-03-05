@@ -1,0 +1,1230 @@
+---
+title: "coverage_plots"
+author: "Chenxin Li"
+date: "11/17/2022"
+output:  
+  html_notebook:
+    number_sections: yes
+    toc: yes
+    toc_float: yes
+  html_document:
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Pacakges 
+```{r}
+library(tidyverse)
+library(Seurat) 
+library(Signac)
+library(readxl)
+
+library(RColorBrewer)
+library(viridis)
+library(rcartocolor)
+
+library(patchwork)
+
+set.seed(666)
+```
+
+# Data 
+## Multiome object
+```{r}
+CRO_multiome <- readRDS("../Results/R_output/CRO_multiome.Rds")
+DefaultAssay(CRO_multiome) <- "MACS2"
+```
+
+```{r}
+CRO_multiome@meta.data %>% 
+  group_by(cell_type) %>% 
+  count()
+```
+
+
+## Gene models 
+```{r}
+repr_gene_models <- read_delim("../Data/cro_v3_anno/cro_v3.gene_models.repr.gff3",
+                               delim = "\t", col_names = F, col_types = cols())
+
+repr_loci <- repr_gene_models %>% 
+  dplyr::filter(X3 == "mRNA") %>% 
+  dplyr::select(X1, X4, X5, X7, X9) %>% 
+  separate(X9, c("ID", "Name"), sep = ";") %>% 
+  dplyr::select(-Name) %>% 
+  separate(ID, c("temp", "gene_ID"), sep = "=") %>% 
+  dplyr::select(-temp) %>% 
+  mutate(LocusID = str_sub(gene_ID, start = 1, end = 13)) %>% 
+  mutate(gene_ID = str_replace(gene_ID, "_", "-")) %>% 
+  mutate(LocusID = str_replace(LocusID, "_", "-")) %>% 
+  dplyr::rename(
+    Chr = X1,
+    start = X4,
+    end = X5,
+    strand = X7
+  )
+
+
+head(repr_loci)
+```
+## MACS2 peak bed file
+```{r}
+macs2_peaks <- read_delim("../Results/MACS2_out/MACS2_broad_peaks.bed",
+                          delim = "\t", col_names = F, col_types = cols())
+```
+
+
+
+## Known MIA genens 
+```{r}
+leaf_MIA_genes <- read_csv( "../Results/R_output/leaf_MIA_genes.csv")
+head(leaf_MIA_genes)
+```
+
+# IPAP 
+## ISY
+```{r}
+ISY <- repr_loci %>% 
+  dplyr::filter(Chr == "Chr7") %>% 
+  dplyr::filter(start > 6966534 - 5000) %>% 
+  dplyr::filter(end < 6971921 + 5000) %>% 
+  mutate(tag = case_when(
+    str_detect(gene_ID, "07G007680") ~ "ISY",
+    str_detect(gene_ID, "07G007690") ~ "ISY(p)",
+    T ~ "other"
+  )) %>% 
+  mutate(caret = case_when(
+    strand == "+" ~ ">",
+    T ~ "<"
+  )) %>% 
+  mutate(hjust = case_when(
+    strand == "+" ~ -0.1,
+    T ~ 1.1
+  )) %>% 
+  mutate(caret.pos = case_when(
+    strand == "+" ~ start, 
+    T ~ end
+  )) %>% 
+  mutate(midpoint = (start + end)/2) %>% 
+  ggplot(aes(x = start, y = 1)) +
+  geom_hline(yintercept = 1, size = 1) +
+  geom_rect(aes(xmin = start, xmax = end, fill = tag),
+            ymin = 0.75, ymax = 1.25) +
+  geom_text(aes(x = caret.pos, hjust = hjust, label = caret), size = 4) +
+  geom_text(aes(x = midpoint, hjust = hjust, label = caret), size = 4) +
+  scale_fill_manual(values = c(brewer.pal(8, "Accent")[1:2], "grey80"),
+                    limits = c("ISY", "ISY(p)","other")) +
+  labs(x = NULL,
+       y = NULL,
+       fill = "Genes") +
+  xlim(c(6966534 - 5000, 6971921 + 5000)) +
+  theme_minimal() +
+  theme(
+    panel.grid = element_blank(),
+    text = element_text(size = 14, color = "black"),
+    axis.text.y = element_blank(),
+    axis.text.x = element_blank(),
+    legend.position = "bottom"
+  )
+```
+
+```{r}
+ISY_cov <- CoveragePlot(region = "Chr7-6966534-6971921", CRO_multiome,
+             extend.upstream = 5000, extend.downstream = 5000,
+             group.by = "cell_type") &
+  scale_fill_manual(values = c(brewer.pal(6, "Accent")[1:3],
+                                brewer.pal(6, "Set2")[6],
+                                brewer.pal(6, "Accent")[5:6],
+                                "grey80")) &
+  xlim(c(6966534 - 5000, 6971921 + 5000)) 
+
+wrap_plots(ISY_cov, ISY, heights = c(1, 0.03), nrow = 2)
+
+ggsave("../Results/R_output/ISY_region.svg", height = 4, width = 5, bg = "white")
+ggsave("../Results/R_output/ISY_region.png", height = 4, width = 5, bg = "white")
+```
+## BIS 
+```{r}
+BIS1_region <- repr_loci %>% 
+  dplyr::filter(Chr == "Chr8") %>% 
+  dplyr::filter(start > 37224833 - 2000) %>% 
+  dplyr::filter(end < 37329223 + 2000) %>% 
+  mutate(tag = case_when(
+    str_detect(gene_ID, "08G020490.1") ~ "BIS1",
+    str_detect(gene_ID, "08G020500.1") ~ "BIS2",
+    str_detect(gene_ID, "08G020510.1") ~ "BIS3",
+    T ~ "other"
+  )) %>% 
+  mutate(caret = case_when(
+    strand == "+" ~ ">",
+    T ~ "<"
+  )) %>% 
+  mutate(hjust = case_when(
+    strand == "+" ~ -0.1,
+    T ~ 1.1
+  )) %>% 
+  mutate(caret.pos = case_when(
+    strand == "+" ~ start, 
+    T ~ end
+  )) %>% 
+  mutate(midpoint = (start + end)/2) %>% 
+  ggplot(aes(x = start, y = 1)) +
+  geom_hline(yintercept = 1, size = 1) +
+  geom_rect(aes(xmin = start, xmax = end, fill = tag),
+            ymin = 0.75, ymax = 1.25) +
+  geom_text(aes(x = caret.pos, hjust = hjust, label = caret), size = 4) +
+  geom_text(aes(x = midpoint, hjust = hjust, label = caret), size = 4) +
+  scale_fill_manual(values = c(brewer.pal(8, "Accent")[1:3], "grey80"),
+                    limits = c("BIS1", "BIS2", "BIS3", "other")) +
+  labs(x = NULL,
+       y = NULL,
+       fill = "Genes") +
+   xlim(c(37224833 - 2000, 37329223 + 2000))   +
+  theme_minimal() +
+  theme(
+    panel.grid = element_blank(),
+    text = element_text(size = 14, color = "black"),
+    axis.text.y = element_blank(),
+    axis.text.x = element_blank(),
+    legend.position = "bottom")
+```
+
+
+
+```{r}
+BIS1_cov <- CoveragePlot(region = "Chr8-37224833-37329223", CRO_multiome,
+             extend.upstream = 2000, extend.downstream = 2000,
+             group.by = "cell_type") &
+  scale_fill_manual(values = c(brewer.pal(6, "Accent")[1:3],
+                                brewer.pal(6, "Set2")[6],
+                                brewer.pal(6, "Accent")[5:6],
+                                "grey80")) &
+  xlim(c(37224833 - 2000, 37329223 + 2000))  
+
+wrap_plots(BIS1_cov, BIS1_region, heights = c(1, 0.03), nrow = 2)
+
+ggsave("../Results/R_output/BIS1_region.svg", height = 4, width = 7, bg = "white")
+ggsave("../Results/R_output/BIS1_region.png", height = 4, width = 7, bg = "white")
+```
+```{r}
+macs2_peaks %>% 
+  filter(X1 == "Chr8") %>% 
+  filter(X2 > 37224833) %>% 
+  filter(X3 < 37329223)
+```
+
+
+## IO
+```{r}
+IO_region <- repr_loci %>% 
+  dplyr::filter(Chr == "Chr3") %>% 
+  dplyr::filter(start > 6526176 - 2000) %>% 
+  dplyr::filter(end < 6527851 + 2000) %>% 
+  mutate(tag = case_when(
+    str_detect(gene_ID, "03G004950") ~ "IO",
+    T ~ "other"
+  )) %>% 
+  mutate(caret = case_when(
+    strand == "+" ~ ">",
+    T ~ "<"
+  )) %>% 
+  mutate(hjust = case_when(
+    strand == "+" ~ -0.1,
+    T ~ 1.1
+  )) %>% 
+  mutate(caret.pos = case_when(
+    strand == "+" ~ start, 
+    T ~ end
+  )) %>% 
+  mutate(midpoint = (start + end)/2) %>% 
+  ggplot(aes(x = start, y = 1)) +
+  geom_hline(yintercept = 1, size = 1) +
+  geom_rect(aes(xmin = start, xmax = end, fill = tag),
+            ymin = 0.75, ymax = 1.25) +
+  geom_text(aes(x = caret.pos, hjust = hjust, label = caret), size = 4) +
+  geom_text(aes(x = midpoint, hjust = hjust, label = caret), size = 4) +
+  scale_fill_manual(values = c(brewer.pal(8, "Accent")[5], "grey80"),
+                    limits = c("IO", "other")) +
+  labs(x = NULL,
+       y = NULL,
+       fill = "Genes") +
+  xlim(c(6526176 - 2000, 6527851 + 2000)) +
+  theme_minimal() +
+  theme(
+    panel.grid = element_blank(),
+    text = element_text(size = 14, color = "black"),
+    axis.text.y = element_blank(),
+    axis.text.x = element_blank(),
+    legend.position = "bottom")
+
+
+```
+
+```{r}
+IO_cov <- CoveragePlot(region = "Chr3-6526176-6527851", CRO_multiome,
+             extend.upstream = 2000, extend.downstream = 2000,
+             group.by = "cell_type") &
+  scale_fill_manual(values = c(brewer.pal(6, "Accent")[1:3],
+                                brewer.pal(6, "Set2")[6],
+                                brewer.pal(6, "Accent")[5:6],
+                                "grey80")) &
+  xlim(c(6526176 - 2000, 6527851 + 2000))
+
+wrap_plots(IO_cov, IO_region, heights = c(1, 0.03), nrow = 2)
+
+ggsave("../Results/R_output/IO_region.svg", height = 4, width = 5, bg = "white")
+ggsave("../Results/R_output/IO_region.png", height = 4, width = 5, bg = "white")
+```
+
+
+# Epidermis
+## TDC, STR, SLTr
+```{r}
+TDC_cluster <- repr_loci %>% 
+  dplyr::filter(Chr == "Chr3") %>% 
+  dplyr::filter(start > 71678061 - 10000) %>% 
+  dplyr::filter(end < 71679563 + 20000) %>% 
+  mutate(tag = case_when(
+    str_detect(gene_ID, "03G032340") ~ "TDC",
+    str_detect(gene_ID, "03G032330") ~ "STR",
+    str_detect(gene_ID, "03G032350") ~ "SLTr",
+    T ~ "other"
+  )) %>% 
+  mutate(caret = case_when(
+    strand == "+" ~ ">",
+    T ~ "<"
+  )) %>% 
+  mutate(hjust = case_when(
+    strand == "+" ~ -0.1,
+    T ~ 1.1
+  )) %>% 
+  mutate(caret.pos = case_when(
+    strand == "+" ~ start, 
+    T ~ end
+  )) %>% 
+  mutate(midpoint = (start + end)/2) %>% 
+  ggplot(aes(x = start, y = 1)) +
+  geom_hline(yintercept = 1, size = 1) +
+  geom_rect(aes(xmin = start, xmax = end, fill = tag),
+            ymin = 0.75, ymax = 1.25) +
+  geom_text(aes(x = caret.pos, hjust = hjust, label = caret), size = 4) +
+  geom_text(aes(x = midpoint, hjust = hjust, label = caret), size = 4) +
+  scale_fill_manual(values = c(brewer.pal(8, "Accent")[c(1,3,5)], "grey80"),
+                    limits = c("STR", "TDC", "SLTr", "other")) +
+  labs(x = NULL,
+       y = NULL,
+       fill = "Genes") +
+  xlim(c(71678061 - 10000, 71679563 + 20000)) +
+  theme_minimal() +
+  theme(
+    panel.grid = element_blank(),
+    text = element_text(size = 14, color = "black"),
+    axis.text.y = element_blank(),
+    axis.text.x = element_blank(),
+    legend.position = "bottom")
+```
+
+```{r}
+TDC_cluster_cov <- CoveragePlot(region = "Chr3-71678061-71679563", CRO_multiome,
+             extend.upstream = 10000, extend.downstream = 20000,
+             group.by = "cell_type") &
+  scale_fill_manual(values = c(brewer.pal(6, "Accent")[1:3],
+                                brewer.pal(6, "Set2")[6],
+                                brewer.pal(6, "Accent")[5:6],
+                                "grey80")) &
+  xlim(c(71678061 - 10000, 71679563 + 20000))
+
+wrap_plots(TDC_cluster_cov, TDC_cluster, heights = c(1, 0.03), nrow = 2)
+
+ggsave("../Results/R_output/TDC_region.svg", height = 4, width = 7, bg = "white")
+ggsave("../Results/R_output/TDC_region.png", height = 4, width = 7, bg = "white")
+```
+
+
+```{r}
+macs2_peaks %>% 
+  filter(X1 == "Chr3") %>% 
+  filter(X2 > 71672244) %>% 
+  filter(X3 < 71773037)
+```
+
+```{r}
+DefaultAssay(CRO_multiome) <- "MACS2"
+FeaturePlot(CRO_multiome, "Chr3-71674759-71675348", 
+            reduction = "wnn.umap", order = T) +
+  scale_color_gradientn(colors = c("grey90", carto_pal(7, "Teal")),
+                        breaks = c(0, 4), 
+                        labels = c("low", "high")) +
+  theme_void() +
+  theme(text = element_text(size = 14),
+        legend.position = "top",
+        plot.title = element_text(size = 12)) +
+  ggtitle("ATAC\nSTR 3'UTR")
+
+ggsave("../Results/R_output/STR_UTR.svg", height = 2.5, width = 2.5, bg = "white")
+ggsave("../Results/R_output/STR_URT.png", height = 2.5, width = 2.5, bg = "white")
+```
+
+
+## GS-THAS2-PAS
+
+```{r}
+GS_cluster <- repr_loci %>% 
+  dplyr::filter(Chr == "Chr6") %>% 
+  dplyr::filter(start > 58926817 - 2000) %>% 
+  dplyr::filter(end < 59016997 + 6000) %>% 
+  mutate(tag = case_when(
+    str_detect(gene_ID, "06G024600") ~ "GS",
+    str_detect(gene_ID, "06G024620") ~ "THAS2",
+    str_detect(gene_ID, "06G024630") ~ "PAS",
+    T ~ "other"
+  )) %>% 
+  mutate(caret = case_when(
+    strand == "+" ~ ">",
+    T ~ "<"
+  )) %>% 
+  mutate(hjust = case_when(
+    strand == "+" ~ -0.1,
+    T ~ 1.1
+  )) %>% 
+  mutate(caret.pos = case_when(
+    strand == "+" ~ start, 
+    T ~ end
+  )) %>% 
+  mutate(midpoint = (start + end)/2) %>% 
+  ggplot(aes(x = start, y = 1)) +
+  geom_hline(yintercept = 1, size = 1) +
+  geom_rect(aes(xmin = start, xmax = end, fill = tag),
+            ymin = 0.75, ymax = 1.25) +
+  geom_text(aes(x = caret.pos, hjust = hjust, label = caret), size = 4) +
+  geom_text(aes(x = midpoint, hjust = hjust, label = caret), size = 4) +
+  scale_fill_manual(values = c(brewer.pal(8, "Accent")[c(1,5,6)], "grey80"),
+                    limits = c("GS", "THAS2", "PAS", "other")) +
+  labs(x = NULL,
+       y = NULL,
+       fill = "Genes") +
+  xlim(c(58926817 - 2000, 59016997 + 6000)) +
+  theme_minimal() +
+  theme(
+    panel.grid = element_blank(),
+    text = element_text(size = 14, color = "black"),
+    axis.text.y = element_blank(),
+    axis.text.x = element_blank(),
+    legend.position = "bottom")
+
+GS_cluster
+```
+
+```{r}
+GS_cov <- CoveragePlot(region = "Chr6-58926817-59016997", CRO_multiome,
+             extend.upstream = 2000, extend.downstream = 6000,
+             group.by = "cell_type") &
+  scale_fill_manual(values = c(brewer.pal(6, "Accent")[1:3],
+                                brewer.pal(6, "Set2")[6],
+                                brewer.pal(6, "Accent")[5:6],
+                                "grey80")) &
+  xlim(c(58926817 - 2000, 59016997 + 6000)) 
+
+wrap_plots(GS_cov, GS_cluster, heights = c(1, 0.03), nrow = 2)
+
+ggsave("../Results/R_output/THAS2_PAS_region.svg", height = 4, width = 7, bg = "white")
+ggsave("../Results/R_output/THAS2_PAS_region.png", height = 4, width = 7, bg = "white")
+```
+
+## THAS2-PAS
+```{r}
+THAS2_PAS <- repr_loci %>% 
+  dplyr::filter(Chr == "Chr6") %>% 
+  dplyr::filter(start > 58960021 - 5000) %>% 
+  dplyr::filter(end < 59016997 + 5000) %>% 
+  mutate(tag = case_when(
+    str_detect(gene_ID, "06G024600") ~ "GS",
+    str_detect(gene_ID, "06G024620") ~ "THAS2",
+    str_detect(gene_ID, "06G024630") ~ "PAS",
+    T ~ "other"
+  )) %>% 
+  mutate(caret = case_when(
+    strand == "+" ~ ">",
+    T ~ "<"
+  )) %>% 
+  mutate(hjust = case_when(
+    strand == "+" ~ -0.1,
+    T ~ 1.1
+  )) %>% 
+  mutate(caret.pos = case_when(
+    strand == "+" ~ start, 
+    T ~ end
+  )) %>% 
+  mutate(midpoint = (start + end)/2) %>% 
+  ggplot(aes(x = start, y = 1)) +
+  geom_hline(yintercept = 1, size = 1) +
+  geom_rect(aes(xmin = start, xmax = end, fill = tag),
+            ymin = 0.75, ymax = 1.25) +
+  geom_text(aes(x = caret.pos, hjust = hjust, label = caret), size = 4) +
+  geom_text(aes(x = midpoint, hjust = hjust, label = caret), size = 4) +
+  scale_fill_manual(values = c(brewer.pal(8, "Accent")[c(5,6)]),
+                    limits = c("THAS2", "PAS")) +
+  labs(x = NULL,
+       y = NULL,
+       fill = "Genes") +
+  xlim(c(58960021 - 5000, 59016997 + 5000)) +
+  theme_minimal() +
+  theme(
+    panel.grid = element_blank(),
+    text = element_text(size = 14, color = "black"),
+    axis.text.y = element_blank(),
+    axis.text.x = element_blank(),
+    legend.position = "none") 
+
+THAS2_PAS
+```
+
+
+```{r}
+THAS2_cov <- CoveragePlot(region = "Chr6-58960021-58962404", CRO_multiome,
+             extend.upstream = 5000, extend.downstream = 5000,
+             group.by = "cell_type") &
+  scale_fill_manual(values = c(brewer.pal(6, "Accent")[1:3],
+                                brewer.pal(6, "Set2")[6],
+                                brewer.pal(6, "Accent")[5:6],
+                                "grey80")) &
+  xlim(c(58960021 - 5000, 58962404 + 5000)) &
+  theme(axis.text.x = element_blank()) &
+  labs(x = NULL)
+
+THAS2_track <- wrap_plots(THAS2_cov, THAS2_PAS + 
+             labs(x = "THAS2"),
+           heights = c(1, 0.03), nrow = 2) &
+            coord_cartesian(xlim = c(58960021 - 5000, 58962404 + 5000))
+
+THAS2_track
+```
+```{r}
+PAS_cov <- CoveragePlot(region = "Chr6-59015092-59017200", CRO_multiome,
+             extend.upstream = 5000, extend.downstream = 5000,
+             group.by = "cell_type") &
+  scale_fill_manual(values = c(brewer.pal(6, "Accent")[1:3],
+                                brewer.pal(6, "Set2")[6],
+                                brewer.pal(6, "Accent")[5:6],
+                                "grey80")) &
+  xlim(c(59015092 - 5000, 59017200 + 5000)) &
+  labs(y = "",
+       x = NULL) &
+  theme(
+    strip.text.y.left = element_blank(),
+    axis.ticks.y = element_blank(),
+    axis.line.y = element_blank(),
+    axis.text.x = element_blank()
+  )
+
+PAS_track <- wrap_plots(PAS_cov, THAS2_PAS +
+             labs(x = "PAS"), heights = c(1, 0.03), nrow = 2) &
+            coord_cartesian(xlim = c(59015092 - 5000, 59017200 + 5000))
+```
+```{r}
+wrap_plots(THAS2_track, PAS_track, nrow = 1) 
+
+ggsave("../Results/R_output/THAS2_PAS_locus.svg", height = 4, width = 5)
+ggsave("../Results/R_output/THAS2_PAS_locus.png", height = 4, width = 5)
+```
+
+```{r}
+58962404 + 5000 - 58960021 + 5000 
+
+59017200 + 5000 - 59015092 + 5000 
+```
+
+# NMT
+```{r}
+CoveragePlot(region = "Chr3-3761117-3762520", CRO_multiome,
+             extend.upstream = 5000, extend.downstream = 3000,
+             group.by = "cell_type") &
+  scale_fill_manual(values = c(brewer.pal(6, "Accent")[1:3],
+                                brewer.pal(6, "Set2")[6],
+                                brewer.pal(6, "Accent")[5:6],
+                                "grey80")) &
+  xlim(c(3761117 - 5000, 3762520 + 3000))
+```
+
+# D4H
+```{r}
+DAH_gene <- repr_loci %>% 
+  dplyr::filter(Chr == "Chr6") %>% 
+  dplyr::filter(start > 32319774 - 5000) %>% 
+  dplyr::filter(end < 32333971 + 0) %>% 
+  mutate(tag = case_when(
+    str_detect(gene_ID, "06G013360") ~ "D4H",
+    T ~ "other"
+  )) %>% 
+  mutate(caret = case_when(
+    strand == "+" ~ ">",
+    T ~ "<"
+  )) %>% 
+  mutate(hjust = case_when(
+    strand == "+" ~ -0.1,
+    T ~ 1.1
+  )) %>% 
+  mutate(caret.pos = case_when(
+    strand == "+" ~ start, 
+    T ~ end
+  )) %>% 
+  mutate(midpoint = (start + end)/2) %>% 
+  ggplot(aes(x = start, y = 1)) +
+  geom_hline(yintercept = 1, size = 1) +
+  geom_rect(aes(xmin = start, xmax = end, fill = tag),
+            ymin = 0.75, ymax = 1.25) +
+  geom_text(aes(x = caret.pos, hjust = hjust, label = caret), size = 4) +
+  geom_text(aes(x = midpoint, hjust = hjust, label = caret), size = 4) +
+  scale_fill_manual(values = c(brewer.pal(8, "Accent")[c(6)], "grey80"),
+                    limits = c("D4H", "other")) +
+  labs(x = NULL,
+       y = NULL,
+       fill = "Genes") +
+  xlim(c(32319774 - 5000, 32333971 + 0)) +
+  theme_minimal() +
+  theme(
+    panel.grid = element_blank(),
+    text = element_text(size = 14, color = "black"),
+    axis.text.y = element_blank(),
+    axis.text.x = element_blank(),
+    legend.position = "bottom")
+```
+
+```{r}
+D4H_cov <- CoveragePlot(region = "Chr6-32319774-32333971", CRO_multiome,
+             extend.upstream = 5000, extend.downstream = 0,
+             group.by = "cell_type") &
+  scale_fill_manual(values = c(brewer.pal(6, "Accent")[1:3],
+                                brewer.pal(6, "Set2")[6],
+                                brewer.pal(6, "Accent")[5:6],
+                                "grey80")) &
+  xlim(c(32319774 - 5000, 32333971))
+
+wrap_plots(
+  D4H_cov, DAH_gene,
+  heights = c(1, 0.03), nrow = 2
+)
+
+ggsave("../Results/R_output/D4H_region.svg", height = 4, width = 5, bg = "white")
+ggsave("../Results/R_output/D4H_region.png", height = 4, width = 5, bg = "white")
+```
+# Extract coordinates 
+## IO
+```{r}
+CoveragePlot(region = "Chr3-6528800-6529800", CRO_multiome,
+             extend.upstream = 0, extend.downstream = 0,
+             group.by = "cell_type") &
+  scale_fill_manual(values = c(brewer.pal(6, "Accent")[1:3],
+                                brewer.pal(6, "Set2")[6],
+                                brewer.pal(6, "Accent")[5:6],
+                                "grey80")) 
+```
+## BIS3
+```{r}
+CoveragePlot(region = "Chr8-37327983-37331774", CRO_multiome,
+             extend.upstream = 0, extend.downstream = 0,
+             group.by = "cell_type") &
+  scale_fill_manual(values = c(brewer.pal(6, "Accent")[1:3],
+                                brewer.pal(6, "Set2")[6],
+                                brewer.pal(6, "Accent")[5:6],
+                                "grey80"))
+```
+## D4H
+```{r}
+CoveragePlot(region = "Chr6-32322000-32324000", CRO_multiome,
+             extend.upstream = 0, extend.downstream = 0,
+             group.by = "cell_type") &
+  scale_fill_manual(values = c(brewer.pal(6, "Accent")[1:3],
+                                brewer.pal(6, "Set2")[6],
+                                brewer.pal(6, "Accent")[5:6],
+                                "grey80"))
+```
+
+## Id-1
+```{r}
+repr_loci %>% 
+  filter(str_detect(gene_ID, "05G033830"))
+
+macs2_peaks %>% 
+  filter(X1 == "Chr5") %>% 
+  filter(X2 > 70567358 - 2000 &
+           X3 < 70567966 + 2000)
+
+# top.idioblat.peaks %>% 
+#  as.data.frame() %>% 
+#  dplyr::rename(name = ".") %>% 
+#  filter(str_detect(name, "Chr5"))
+```
+
+```{r}
+DefaultAssay(CRO_multiome) <- "MACS2"
+
+Id_1_ATAC <- FeaturePlot(CRO_multiome, features = c("Chr5-70567323-70568027"),
+            reduction = "wnn.umap", order = T) +
+  scale_color_gradientn(colors = c("grey90", carto_pal(7, "Magenta")),
+                        breaks = c(0, 5), 
+                        labels = c("low", "high")) +
+  theme_void() +
+  theme(text = element_text(size = 14),
+        legend.position = "top",
+        plot.title = element_text(size = 12)) +
+  ggtitle("ATAC\n05G033830 (P450) Distal")
+
+
+DefaultAssay(CRO_multiome) <- "RNA"
+
+Id_1_RNA <- FeaturePlot(CRO_multiome, features = c("CRO-05G033830.1"), 
+                        # gene associated with peak
+            reduction = "wnn.umap", order = T) +
+  scale_color_gradientn(colors = c("grey90", carto_pal(7, "Magenta")),
+                        breaks = c(0, 4), 
+                        labels = c("low", "high")) +
+  theme_void() +
+  theme(text = element_text(size = 14),
+        legend.position = "top",
+        plot.title = element_text(size = 12)) +
+  ggtitle("RNA\n05G033830 (P450)")
+
+wrap_plots(Id_1_ATAC, Id_1_RNA, nrow = 2)
+
+ggsave("../Results/R_output/Id_1_example.svg", height = 5, width = 2.8, bg = "white")
+ggsave("../Results/R_output/Id_1_example.png", height = 5, width = 2.8, bg = "white")
+```
+
+```{r}
+DefaultAssay(CRO_multiome) <- "MACS2"
+
+CoveragePlot(region = "Chr5-70563996-70565621", CRO_multiome,
+             extend.upstream = 2000, extend.downstream = 2000,
+             group.by = "cell_type") &
+  scale_fill_manual(values = c(brewer.pal(6, "Accent")[1:3],
+                                brewer.pal(6, "Set2")[6],
+                                brewer.pal(6, "Accent")[5:6],
+                                "grey80")) 
+```
+
+
+## Id-2
+```{r}
+repr_loci %>% 
+  filter(str_detect(gene_ID, "07G010240"))
+
+# top.idioblat.peaks %>% 
+#   as.data.frame() %>% 
+#   dplyr::rename(name = ".") %>% 
+#   filter(str_detect(name, "Chr7"))
+```
+
+```{r}
+DefaultAssay(CRO_multiome) <- "MACS2"
+
+Id_2_ATAC <- FeaturePlot(CRO_multiome, features = c("Chr7-11025838-11026091"),
+            reduction = "wnn.umap", order = T) +
+  scale_color_gradientn(colors = c("grey90", carto_pal(7, "Magenta")),
+                        breaks = c(0, 5), 
+                        labels = c("low", "high")) +
+  theme_void() +
+  theme(text = element_text(size = 14),
+        legend.position = "top",
+        plot.title = element_text(size = 12)) + 
+  ggtitle("ATAC\n07G010240 (MATE) Promoter")
+
+
+DefaultAssay(CRO_multiome) <- "RNA"
+
+Id_2_RNA <- FeaturePlot(CRO_multiome, features = c("CRO-07G010240.1"), 
+            reduction = "wnn.umap", order = T) +
+  scale_color_gradientn(colors = c("grey90", carto_pal(7, "Magenta")),
+                        breaks = c(0, 4), 
+                        labels = c("low", "high")) +
+  theme_void() +
+  theme(text = element_text(size = 14),
+        legend.position = "top",
+        plot.title = element_text(size = 12)) +
+  ggtitle("RNA\n07G010240 (MATE)")
+
+wrap_plots(Id_2_ATAC, Id_2_RNA, nrow = 2)
+
+ggsave("../Results/R_output/Id_2_example.svg", height = 5, width = 2.8, bg = "white")
+ggsave("../Results/R_output/Id_2_example.png", height = 5, width = 2.8, bg = "white")
+```
+
+```{r}
+DefaultAssay(CRO_multiome) <- "peaks"
+
+CoveragePlot(region = "Chr7-11026488-11033353", CRO_multiome,
+             extend.upstream = 2000, extend.downstream = 2000,
+             group.by = "cell_type") &
+  scale_fill_manual(values = c(brewer.pal(6, "Accent")[1:3],
+                                brewer.pal(6, "Set2")[6],
+                                brewer.pal(6, "Accent")[5:6],
+                                "grey80")) 
+```
+
+## Id-3
+```{r}
+macs2_peaks %>% 
+  filter(X1 == "Chr3") %>% 
+  filter(X2 > 73954 - 2000) %>% 
+  filter(X3 < 78722 + 2000)
+```
+
+```{r}
+DefaultAssay(CRO_multiome) <- "MACS2"
+
+Id_3_ATAC <- FeaturePlot(CRO_multiome, features = c("Chr3-73795-74028"),
+            reduction = "wnn.umap", order = T) +
+  scale_color_gradientn(colors = c("grey90", carto_pal(7, "Magenta")),
+                        breaks = c(0, 5), 
+                        labels = c("low", "high")) +
+  theme_void() +
+  theme(text = element_text(size = 14),
+        legend.position = "top",
+        plot.title = element_text(size = 12)) +
+  ggtitle("ATAC\n03G000120 (WRKY) 3'UTR") 
+
+Id_3_ATAC_2 <- FeaturePlot(CRO_multiome, features = c("Chr3-78568-78785"),
+            reduction = "wnn.umap", order = T) +
+  scale_color_gradientn(colors = c("grey90", carto_pal(7, "Magenta")),
+                        breaks = c(0, 5), 
+                        labels = c("low", "high")) +
+  theme_void() +
+  theme(text = element_text(size = 14),
+        legend.position = "top",
+        plot.title = element_text(size = 12)) +
+  ggtitle("ATAC\n03G000120 (WRKY) Promoter") 
+
+
+DefaultAssay(CRO_multiome) <- "RNA"
+
+Id_3_RNA <- FeaturePlot(CRO_multiome, features = c("CRO-03G000120.5"), 
+            reduction = "wnn.umap", order = T) +
+  scale_color_gradientn(colors = c("grey90", carto_pal(7, "Magenta")),
+                        breaks = c(0, 4), 
+                        labels = c("low", "high")) +
+  theme_void() +
+  theme(text = element_text(size = 14),
+        legend.position = "top",
+        plot.title = element_text(size = 12)) +
+  ggtitle("RNA\n03G000120 (WRKY)") 
+
+wrap_plots(Id_3_ATAC_2, Id_3_RNA, nrow = 2)
+
+ggsave("../Results/R_output/Id_3_example.svg", height = 5, width = 2.8, bg = "white")
+ggsave("../Results/R_output/Id_3_example.png", height = 5, width = 2.8, bg = "white")
+```
+```{r}
+wrap_plots(Id_3_ATAC, Id_3_ATAC_2, Id_3_RNA, nrow = 3)
+```
+
+```{r}
+repr_loci %>% 
+  filter(str_detect(gene_ID, "03G000120"))
+
+DefaultAssay(CRO_multiome) <- "MACS2"
+
+WRKY_cov <- CoveragePlot(region = "Chr3-73954-78722", CRO_multiome,
+             extend.upstream = 2000, extend.downstream = 2000,
+             group.by = "cell_type") &
+  scale_fill_manual(values = c(brewer.pal(6, "Accent")[1:3],
+                                brewer.pal(6, "Set2")[6],
+                                brewer.pal(6, "Accent")[5:6],
+                                "grey80")) 
+```
+
+```{r}
+WRKY_region <- repr_loci %>% 
+  dplyr::filter(Chr == "Chr3") %>% 
+  dplyr::filter(start > 73954 - 2000) %>% 
+  dplyr::filter(end < 78722 + 2000) %>% 
+  mutate(tag = case_when(
+    str_detect(gene_ID, "03G000120") ~ "Idioblast WRKY",
+    T ~ "other"
+  )) %>% 
+  mutate(caret = case_when(
+    strand == "+" ~ ">",
+    T ~ "<"
+  )) %>% 
+  mutate(hjust = case_when(
+    strand == "+" ~ -0.1,
+    T ~ 1.1
+  )) %>% 
+  mutate(caret.pos = case_when(
+    strand == "+" ~ start, 
+    T ~ end
+  )) %>% 
+  mutate(midpoint = (start + end)/2) %>% 
+  ggplot(aes(x = start, y = 1)) +
+  geom_hline(yintercept = 1, size = 1) +
+  geom_rect(aes(xmin = start, xmax = end, fill = tag),
+            ymin = 0.75, ymax = 1.25) +
+  geom_text(aes(x = caret.pos, hjust = hjust, label = caret), size = 4) +
+  geom_text(aes(x = midpoint, hjust = hjust, label = caret), size = 4) +
+  scale_fill_manual(values = c(brewer.pal(8, "Accent")[6], "grey80"),
+                    limits = c("Idioblast WRKY", "other")) +
+  labs(x = NULL,
+       y = NULL,
+       fill = "Genes") +
+  xlim(c(73954 - 2000, 78722 + 2000)) +
+  theme_minimal() +
+  theme(
+    panel.grid = element_blank(),
+    text = element_text(size = 14, color = "black"),
+    axis.text.y = element_blank(),
+    axis.text.x = element_blank(),
+    legend.position = "bottom")
+
+wrap_plots(WRKY_cov, WRKY_region, 
+           heights = c(1, 0.03), nrow = 2)
+
+ggsave("../Results/R_output/WRKY_region.svg", height = 4, width = 5, bg = "white")
+ggsave("../Results/R_output/WRKY_region.png", height = 4, width = 5, bg = "white")
+```
+
+
+# Export bed file 
+```{r}
+candidate_CREs <- read_xlsx("../Results/Candidate_ctrl_elements.xlsx")
+candidate_CREs
+```
+```{r}
+candidate_CREs %>% 
+  ggplot(aes(x = L, y = rank(L))) +
+  geom_point(size = 3) + 
+  labs(x = "Length (bp)",
+       y = "Rank") +
+  theme_classic()
+```
+```{r}
+candidate_CREs <- candidate_CREs %>% 
+  mutate(start_new = start - 100) %>% 
+  mutate(end_new = end + 100) %>% 
+  select(Chr, start_new, end_new, name)
+
+head(candidate_CREs)
+```
+```{r}
+write_delim(candidate_CREs, "../Results/R_output/candidate_CREs_ex100.bed", delim = "\t", col_names = F)
+```
+
+
+# Myb TFs
+## 1
+```{r}
+repr_loci %>% 
+  filter(str_detect(LocusID, "07G002170"))
+```
+
+```{r}
+DefaultAssay(CRO_multiome) <- "MACS2"
+
+CoveragePlot(region = "Chr7-2319313-2321498", CRO_multiome,
+             extend.upstream = 2000, extend.downstream = 2000,
+             group.by = "cell_type") &
+  scale_fill_manual(values = c(brewer.pal(6, "Accent")[1:3],
+                                brewer.pal(6, "Set2")[6],
+                                brewer.pal(6, "Accent")[5:6],
+                                "grey80")) 
+```
+## 2
+```{r}
+repr_loci %>% 
+  filter(str_detect(LocusID, "05G006800"))
+```
+
+Chr5-6619122-6619429	
+
+```{r}
+DefaultAssay(CRO_multiome) <- "MACS2"
+
+CoveragePlot(region = "Chr5-6619213-6621215", CRO_multiome,
+             extend.upstream = 2000, extend.downstream = 2000,
+             group.by = "cell_type") &
+  scale_fill_manual(values = c(brewer.pal(6, "Accent")[1:3],
+                                brewer.pal(6, "Set2")[6],
+                                brewer.pal(6, "Accent")[5:6],
+                                "grey80")) 
+```
+
+## 3
+```{r}
+repr_loci %>% 
+  filter(str_detect(LocusID, "04G033370"))
+```
+
+Chr4-68759921-68760235
+
+```{r}
+CoveragePlot(region = "Chr4-68757069-68759520", CRO_multiome,
+             extend.upstream = 2000, extend.downstream = 2000,
+             group.by = "cell_type") &
+  scale_fill_manual(values = c(brewer.pal(6, "Accent")[1:3],
+                                brewer.pal(6, "Set2")[6],
+                                brewer.pal(6, "Accent")[5:6],
+                                "grey80")) 
+```
+ 
+# ZCTs
+```{r}
+# MIA_genes_info %>% 
+#  filter(segment == "TF") %>% 
+#  filter(str_detect(tag, "ZCT"))
+```
+
+## ZCT3
+Chr7	7063225	7064339	mRNA	CRO_07G007820	Chr7	7063467	7064246	- 
+```{r}
+CoveragePlot(region = "Chr7-7063225-7064339", CRO_multiome,
+             extend.upstream = 2000, extend.downstream = 2000,
+             group.by = "cell_type") &
+  scale_fill_manual(values = c(brewer.pal(6, "Accent")[1:3],
+                                brewer.pal(6, "Set2")[6],
+                                brewer.pal(6, "Accent")[5:6],
+                                "grey80"))  
+```
+
+## ZCT2 
+Chr8	54009965	54011054	mRNA	CRO_08G027810	Chr8	54010138	54010644	+ 
+```{r}
+CoveragePlot(region = "Chr8-54009965-54011054", CRO_multiome,
+             extend.upstream = 2000, extend.downstream = 2000,
+             group.by = "cell_type") &
+  scale_fill_manual(values = c(brewer.pal(6, "Accent")[1:3],
+                                brewer.pal(6, "Set2")[6],
+                                brewer.pal(6, "Accent")[5:6],
+                                "grey80"))  
+```
+
+## ZCT1
+Chr1	7708862	7709744	mRNA	CRO_01G008640	Chr1	7709088	7716700	-
+```{r}
+ZCT1_region <- repr_loci %>% 
+  dplyr::filter(Chr == "Chr1") %>% 
+  dplyr::filter(start > 7708862 - 1000) %>% 
+  dplyr::filter(end < 7709744 + 10000) %>% 
+  mutate(caret = case_when(
+    strand == "+" ~ ">",
+    T ~ "<"
+  )) %>% 
+  mutate(hjust = case_when(
+    strand == "+" ~ -0.1,
+    T ~ 1.1
+  )) %>% 
+  mutate(caret.pos = case_when(
+    strand == "+" ~ start, 
+    T ~ end
+  )) %>% 
+  mutate(midpoint = (start + end)/2) %>% 
+  ggplot(aes(x = start, y = 1)) +
+  geom_hline(yintercept = 1, size = 1) +
+  geom_rect(aes(xmin = start, xmax = end),
+            ymin = 0.75, ymax = 1.25, fill = "grey90") +
+  geom_text(aes(x = caret.pos, hjust = hjust, label = caret), size = 4) +
+  geom_text(aes(x = midpoint, hjust = hjust, label = caret), size = 4) +
+  labs(x = NULL,
+       y = NULL,
+       fill = "Genes") +
+  xlim(c(7708862 - 1000, 7709744 + 10000)) +
+  theme_minimal() +
+  theme(
+    panel.grid = element_blank(),
+    text = element_text(size = 14, color = "black"),
+    axis.text.y = element_blank(),
+    axis.text.x = element_blank(),
+    legend.position = "bottom")
+
+ZCT1_region
+```
+
+```{r}
+ZCT1_cov <- CoveragePlot(region = "Chr1-7708862-7709744", CRO_multiome,
+             extend.upstream = 1000, extend.downstream = 10000,
+             group.by = "cell_type") &
+  scale_fill_manual(values = c(brewer.pal(6, "Accent")[1:3],
+                                brewer.pal(6, "Set2")[6],
+                                brewer.pal(6, "Accent")[5:6],
+                                "grey80"))  
+
+wrap_plots(ZCT1_cov, ZCT1_region,
+           nrow = 2, heights = c(1, 0.05))
+```
+
+
+```{r}
+macs2_peaks %>% 
+  filter(X1 == "Chr7") %>% 
+  filter(X2 > 7063225 - 2000) %>% 
+  filter(X3 < 7064339 + 2000)  
+
+macs2_peaks %>% 
+  filter(X1 == "Chr8") %>% 
+  filter(X2 > 54009965 - 2000) %>% 
+  filter(X3 < 54011054 + 2000)  
+
+macs2_peaks %>% 
+  filter(X1 == "Chr1") %>% 
+  filter(X2 > 7708862 - 1000) %>% 
+  filter(X3 < 7709744 + 10000)  
+```
+```{r}
+7709744 - 200
+7709744 + 300
+```
+
+
+```{r}
+zct_tss_bed <- read_table("~/Desktop/UGA/CRO_multiome/Results/R_output/ZCT_TSS.bed", 
+    col_names = FALSE)
+```
+
+```{r}
+write_delim(zct_tss_bed, "../Results/R_output/ZCT_TSS_2.bed", col_names = F,
+            delim = "\t")
+```
+
+# CS
+Chr3	4645629	4647016	mRNA + 
+CRO_03G003800.1 
+```{r}
+leaf_MIA_genes %>% 
+  filter(tag == "CS")
+```
+
+```{r}
+CS_region <- repr_loci %>% 
+  dplyr::filter(Chr == "Chr3") %>% 
+  dplyr::filter(start > 4645629 - 2000) %>% 
+  dplyr::filter(end < 4647016 + 2000) %>% 
+  mutate(caret = case_when(
+    strand == "+" ~ ">",
+    T ~ "<"
+  )) %>% 
+  mutate(hjust = case_when(
+    strand == "+" ~ -0.1,
+    T ~ 1.1
+  )) %>% 
+  mutate(caret.pos = case_when(
+    strand == "+" ~ start, 
+    T ~ end
+  )) %>% 
+  mutate(midpoint = (start + end)/2) %>% 
+  mutate(tag = case_when(
+    str_detect(gene_ID, "03G003800") ~ "CS",
+    T ~ "other"
+  )) %>% 
+  ggplot(aes(x = start, y = 1)) +
+  geom_hline(yintercept = 1, size = 1) +
+  geom_rect(aes(xmin = start, xmax = end, fill = tag),
+            ymin = 0.75, ymax = 1.25) +
+  geom_text(aes(x = caret.pos, hjust = hjust, label = caret), size = 4) +
+  geom_text(aes(x = midpoint, hjust = hjust, label = caret), size = 4) +
+  scale_fill_manual(values = brewer.pal(n = 8, name = "Accent")[2]) +
+  labs(x = NULL,
+       y = NULL,
+       fill = "Genes") +
+  xlim(c(4645629 - 2000, 4647016 + 2000)) +
+  theme_minimal() +
+  theme(
+    panel.grid = element_blank(),
+    text = element_text(size = 14, color = "black"),
+    axis.text.y = element_blank(),
+    axis.text.x = element_blank(),
+    legend.position = "bottom")
+
+CS_region
+```
+```{r}
+DefaultAssay(CRO_multiome) <- "MACS2"
+CS_cov <- CoveragePlot(region = "Chr3-4645629-4647016", CRO_multiome,
+             extend.upstream = 2000, extend.downstream = 2000,
+             group.by = "cell_type") &
+  scale_fill_manual(values = c(brewer.pal(6, "Accent")[1:3],
+                                brewer.pal(6, "Set2")[6],
+                                brewer.pal(6, "Accent")[5:6],
+                                "grey80")) 
+
+wrap_plots(CS_cov, CS_region,
+           nrow = 2, heights = c(1, 0.05))
+
+ggsave("../Results/R_output/CS_cov.svg", height = 4, width = 5, bg = "white")
+ggsave("../Results/R_output/CS_cov.png", height = 4, width = 5, bg = "white")
+```
+```{r}
+DefaultAssay(CRO_multiome) <- "RNA"
+CS_RNA <- FeaturePlot(object = CRO_multiome, features = "CRO-03G003800.1", order = T,
+              reduction = "wnn.umap") +
+  scale_color_gradientn(colors = c("grey90", carto_pal(7, "Teal")),
+                        breaks = c(0, 3), 
+                        labels = c("low", "high")) +
+  theme_void() +
+  theme(text = element_text(size = 14),
+        legend.position = "top",
+        plot.title = element_text(size = 12)) +
+  ggtitle("CS RNA")
+  
+```
+```{r}
+macs2_peaks %>% 
+  filter(X1 == "Chr3") %>% 
+  filter(X2 >= 4645629 - 2000) %>% 
+  filter(X3 <= 4647016 + 2000)
+```
+```{r}
+DefaultAssay(CRO_multiome) <- "MACS2"
+CS_ATAC <- FeaturePlot(object = CRO_multiome, features = "Chr3-4645315-4646034", order = T,
+              reduction = "wnn.umap") +
+  scale_color_gradientn(colors = c("grey90", carto_pal(7, "Teal")),
+                        breaks = c(0, 5), 
+                        labels = c("low", "high")) +
+  theme_void() +
+  theme(text = element_text(size = 14),
+        legend.position = "top",
+        plot.title = element_text(size = 12)) +
+  ggtitle("CS promoter ATAC")
+```
+```{r}
+wrap_plots(CS_ATAC, CS_RNA, nrow = 2)
+
+ggsave("../Results/R_output/CS_example.svg", height = 5, width = 2.8, bg = "white")
+ggsave("../Results/R_output/CS_example.png", height = 5, width = 2.8, bg = "white")
+```
+
+# THAS1
+Chr1	77773866	77778063	mRNA - 
+01G033230
+```{r}
+repr_loci %>% 
+  filter(str_detect(gene_ID, "01G033230"))
+```
+
+```{r}
+CoveragePlot(region = "Chr1-77773866-77778063", CRO_multiome,
+             extend.upstream = 5000, extend.downstream = 5000,
+             group.by = "cell_type") &
+  scale_fill_manual(values = c(brewer.pal(6, "Accent")[1:3],
+                                brewer.pal(6, "Set2")[6],
+                                brewer.pal(6, "Accent")[5:6],
+                                "grey80")) 
+```
+```{r}
+DefaultAssay(CRO_multiome) <- "RNA"
+DotPlot(CRO_multiome, features = c("CRO-01G033220.2", "CRO-01G033230.1", "CRO-01G033240.2")) 
+```
+# SS
+```{r}
+repr_loci %>% 
+  filter(str_detect(gene_ID, "03G003540"))
+```
+```{r}
+CoveragePlot(region = "Chr3-4216807-4219441", CRO_multiome,
+             extend.upstream = 10000, extend.downstream = 10000,
+             group.by = "cell_type") &
+  scale_fill_manual(values = c(brewer.pal(6, "Accent")[1:3],
+                                brewer.pal(6, "Set2")[6],
+                                brewer.pal(6, "Accent")[5:6],
+                                "grey80")) 
+```
+

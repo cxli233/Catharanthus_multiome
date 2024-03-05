@@ -1,0 +1,192 @@
+---
+title: "Split_fragments"
+author: "Chenxin Li"
+date: "2022-12-21"
+output:  
+  html_notebook:
+    number_sections: yes
+    toc: yes
+    toc_float: yes
+  html_document:
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Packages 
+```{r}
+library(tidyverse)
+library(Seurat) 
+library(Signac)
+library(readxl)
+
+library(RColorBrewer)
+library(viridis)
+library(rcartocolor)
+
+library(patchwork)
+```
+
+# Data
+## Seurate object
+```{r}
+CRO_multiome <- readRDS("../Results/R_output/CRO_multiome.Rds")
+DefaultAssay(CRO_multiome) <- "peaks"
+```
+
+## fragment files 
+```{r}
+cro2_frag <- read_delim("../Results/CRO_2/outs/CRO2_fragments.tsv",
+                        delim = "\t", col_names = F)
+
+head(cro2_frag)
+```
+```{r}
+cro3_frag <- read_delim("../Results/CRO_3/outs/cro3_fragments.tsv",
+                        delim = "\t", col_names = F)
+
+head(cro3_frag)
+```
+
+```{r}
+cro4_frag <- read_delim("../Results/CRO_4/outs/CRO4_fragments.tsv",
+                        delim = "\t", col_names = F)
+
+head(cro4_frag)
+```
+
+# Clusters and their barcodes 
+```{r}
+head(CRO_multiome@meta.data)
+```
+
+CRO2 barcodes append '_1'
+CRO3 barcodes append '_2'
+CRO4 barcodes append '_3'
+
+```{r}
+Mesophyll_BC <- CRO_multiome@meta.data %>% 
+  filter(cell_type == "Mesophyll") %>%  
+  select(barcode)
+
+Epidermis_BC <- CRO_multiome@meta.data %>% 
+  filter(cell_type == "Epidermis") %>%  
+  select(barcode)
+
+Vasculature_BC <- CRO_multiome@meta.data %>% 
+  filter(cell_type == "Vasculature") %>%  
+  select(barcode)
+
+Idioblast_BC <- CRO_multiome@meta.data %>% 
+  filter(cell_type == "Idioblast") %>%  
+  select(barcode)
+
+Cluster4_BC <- CRO_multiome@meta.data %>% 
+  filter(seurat_clusters == "4") %>%  
+  select(barcode)
+
+Cluster9_BC <- CRO_multiome@meta.data %>% 
+  filter(seurat_clusters == "9") %>%  
+  select(barcode)
+
+GC_BC <- CRO_multiome@meta.data %>% 
+  filter(cell_type == "Guard cells") %>%  
+  select(barcode)
+
+IPAP_BC <- CRO_multiome@meta.data %>% 
+  filter(cell_type == "IPAP") %>%  
+  select(barcode)
+```
+
+# Subset fragment files based on cluster
+```{r}
+all_frag <- rbind(
+  cro2_frag %>% 
+    mutate(barcode = paste0(X4, "_1")), 
+  cro3_frag %>% 
+    mutate(barcode = paste0(X4, "_2")),
+  cro4_frag %>% 
+    mutate(barcode = paste0(X4, "_3"))
+) %>% 
+  mutate(start = X3-1) %>% 
+  select(X1, start, X3, barcode, X5) %>% 
+  mutate(BC2 = str_remove(barcode, "-1"))
+
+head(all_frag)
+```
+
+## Duplicate rows based on numbe of reads supporting 
+```{r}
+all_frag_bed <- data.frame(
+  all_frag[rep(seq_len(nrow(all_frag)), all_frag$X5), 1:ncol(all_frag), drop = F], 
+  row.names = NULL)
+
+head(all_frag_bed)
+```
+
+
+
+```{r}
+Mesophyll_frag <- all_frag_bed %>% 
+  filter(BC2 %in% Mesophyll_BC$barcode)
+
+Epidermis_frag <- all_frag_bed %>% 
+  filter(BC2 %in% Epidermis_BC$barcode)
+
+Vasculature_frag <- all_frag_bed %>% 
+  filter(BC2 %in% Vasculature_BC$barcode)
+
+Idioblast_frag <- all_frag_bed %>% 
+  filter(BC2 %in% Idioblast_BC$barcode)
+
+Cluster4_frag <- all_frag_bed %>% 
+  filter(BC2 %in% Cluster4_BC$barcode)
+
+Cluster9_frag <- all_frag_bed %>% 
+  filter(BC2 %in% Cluster9_BC$barcode)
+
+GC_frag <- all_frag_bed %>% 
+  filter(BC2 %in% GC_BC$barcode)
+
+IPAP_frag <- all_frag_bed %>% 
+  filter(BC2 %in% IPAP_BC$barcode)
+```
+
+
+# Write results out for each cluser 
+```{r}
+write_delim(Mesophyll_frag %>% 
+              select(-barcode, -X5, -BC2), delim = "\t", col_names = F, 
+            "../Results/Fragments/Mesophyll_frag.bed")
+
+write_delim(Epidermis_frag %>% 
+              select(-barcode, -X5, -BC2), delim = "\t", col_names = F, 
+            "../Results/Fragments/Epidermis_frag.bed")
+
+write_delim(Vasculature_frag %>% 
+              select(-barcode, -X5, -BC2), delim = "\t", col_names = F, 
+            "../Results/Fragments/Vasculature_frag.bed")
+
+write_delim(Idioblast_frag %>% 
+              select(-barcode, -X5, -BC2), delim = "\t", col_names = F, 
+            "../Results/Fragments/Idioblast_frag.bed")
+
+write_delim(Cluster4_frag %>% 
+              select(-barcode, -X5, -BC2), delim = "\t", col_names = F, 
+            "../Results/Fragments/Cluster4_frag.bed")
+
+write_delim(Cluster9_frag %>% 
+              select(-barcode, -X5, -BC2), delim = "\t", col_names = F, 
+            "../Results/Fragments/Cluster9_frag.bed")
+
+write_delim(GC_frag %>% 
+              select(-barcode, -X5, -BC2), delim = "\t", col_names = F, 
+            "../Results/Fragments/GC_frag.bed")
+
+write_delim(IPAP_frag %>% 
+              select(-barcode, -X5, -BC2), delim = "\t", col_names = F, 
+            "../Results/Fragments/IPAP_frag.bed")
+```
+

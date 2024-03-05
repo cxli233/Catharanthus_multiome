@@ -1,0 +1,594 @@
+---
+title: "ATAC_integration"
+author: "Chenxin Li"
+date: "11/10/2022"
+output:  
+  html_notebook:
+    number_sections: yes
+    toc: yes
+    toc_float: yes
+  html_document:
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Packages 
+```{r}
+library(tidyverse)
+library(Seurat) 
+library(Signac)
+library(GenomicRanges)
+
+library(readxl)
+
+library(RColorBrewer)
+library(viridis)
+library(rcartocolor)
+
+library(patchwork)
+```
+
+# Data 
+## Load a common set of peaks
+Use merged peaks: 
+
+On GARCR, do:
+Combine the atac_peaks.bed file from replicates. 
+Sort them. 
+Remove duplicates (if any).
+Then use bedtools merge to make a single bed file. 
+
+```{r}
+arc_peaks <- read_delim("../Results/CellrangerArc_peaks.bed",
+                          delim = "\t", col_names = F, col_types = cols())
+
+arc_peaks$X4 <- "name"
+head(arc_peaks)
+```
+### Produce GRange from bed
+```{r}
+arc_peaks_granges <- lapply(split(arc_peaks, arc_peaks$X4), function(i){
+  GRanges(seqnames = i$X1,
+          ranges = IRanges(
+            start = i$X2,
+            end = i$X3
+          ))
+})
+
+arc_peaks_granges
+```
+```{r}
+arc_peaks_nice <- keepStandardChromosomes(arc_peaks_granges$name, pruning.mode = "coarse")
+arc_peaks_nice
+```
+
+## CRO2 
+```{r}
+CRO2_metadata <- read.csv(
+  "../Results/CRO_2/outs/per_barcode_metrics.csv",
+  header = T,
+  row.names = 1
+)
+```
+
+```{r}
+CRO2_frag_path <- "../Results/CRO_2/outs/atac_fragments.tsv.gz"
+CRO2_frag_counts <- CountFragments(fragments = CRO2_frag_path)
+CRO2_cells <- CRO2_frag_counts$CB
+CRO2_fragment_object <- CreateFragmentObject(path = CRO2_frag_path, cells = CRO2_cells)
+```
+
+
+```{r}
+CRO2_ATAC_matrix <- FeatureMatrix(
+  fragments = CRO2_fragment_object,
+  features = arc_peaks_nice,
+  cells = CRO2_cells
+)
+
+CRO2_ATAC_assay <- CreateChromatinAssay(
+  counts = CRO2_ATAC_matrix,
+  min.features = 1000,
+  fragments = CRO2_fragment_object
+) 
+
+CRO2_ATAC_object <- CreateSeuratObject(
+  counts = CRO2_ATAC_assay, 
+  assay = "peaks",
+  meta.data = CRO2_metadata, 
+  min.cells = 0,
+  min.features = 0)
+```
+```{r}
+CRO2_metadata %>% 
+  mutate(FRiP = atac_peak_region_fragments/atac_fragments * 100) %>% 
+  mutate(FRiT = atac_TSS_fragments/atac_fragments * 100) %>% 
+  ggplot(aes(x = atac_fragments, y = FRiP)) +
+  geom_point(alpha = 0.5) +
+  scale_x_log10() +
+  #scale_y_log10() +
+  theme_classic()
+
+CRO2_metadata %>% 
+  mutate(FRiP = atac_peak_region_fragments/atac_fragments * 100) %>% 
+  mutate(FRiT = atac_TSS_fragments/atac_fragments * 100) %>% 
+  ggplot(aes(x = atac_fragments, y = FRiT)) +
+  geom_point(alpha = 0.5) +
+  scale_x_log10() +
+  #scale_y_log10() +
+  theme_classic()
+```
+
+## CRO3
+```{r}
+CRO3_frag_path <- "../Results/CRO_3/outs/atac_fragments.tsv.gz"
+CRO3_frag_counts <- CountFragments(fragments = CRO3_frag_path)
+
+CRO3_metadata <- read.csv(
+  "../Results/CRO_3/outs/per_barcode_metrics.csv",
+  header = T,
+  row.names = 1
+)
+
+CRO3_cells <- CRO3_frag_counts$CB
+CRO3_fragment_object <- CreateFragmentObject(path = CRO3_frag_path, cells = CRO3_cells)
+```
+
+```{r}
+CRO3_ATAC_matrix <- FeatureMatrix(
+  fragments = CRO3_fragment_object,
+  features = arc_peaks_nice,   
+  cells = CRO3_cells
+)
+
+CRO3_ATAC_assay <- CreateChromatinAssay(
+  counts = CRO3_ATAC_matrix,
+  min.features = 1000,
+  fragments = CRO3_fragment_object
+) 
+
+CRO3_ATAC_object <- CreateSeuratObject(
+  counts = CRO3_ATAC_assay, 
+  assay = "peaks",
+  meta.data = CRO3_metadata,
+  min.cells = 0,
+  min.features = 0)
+```
+
+```{r}
+CRO3_metadata %>% 
+  mutate(FRiP = atac_peak_region_fragments/atac_fragments * 100) %>% 
+  mutate(FRiT = atac_TSS_fragments/atac_fragments * 100) %>% 
+  ggplot(aes(x = atac_fragments, y = FRiP)) +
+  geom_point(alpha = 0.5) +
+  scale_x_log10() +
+  #scale_y_log10() +
+  theme_classic()
+
+CRO3_metadata %>% 
+  mutate(FRiP = atac_peak_region_fragments/atac_fragments * 100) %>% 
+  mutate(FRiT = atac_TSS_fragments/atac_fragments * 100) %>% 
+  ggplot(aes(x = atac_fragments, y = FRiT)) +
+  geom_point(alpha = 0.5) +
+  scale_x_log10() +
+  #scale_y_log10() +
+  theme_classic()
+```
+
+## CRO4
+```{r}
+CRO4_frag_path <- "../Results/CRO_4/outs/atac_fragments.tsv.gz"
+CRO4_frag_counts <- CountFragments(fragments = CRO4_frag_path)
+
+CRO4_metadata <- read.csv(
+  "../Results/CRO_4/outs/per_barcode_metrics.csv",
+  header = T,
+  row.names = 1
+)
+CRO4_cells <- CRO4_frag_counts$CB
+CRO4_fragment_object <- CreateFragmentObject(path = CRO4_frag_path, cells = CRO4_cells)
+```
+
+```{r}
+CRO4_ATAC_matrix <- FeatureMatrix(
+  fragments = CRO4_fragment_object,
+  features = arc_peaks_nice,    
+  cells = CRO4_cells
+)
+
+CRO4_ATAC_assay <- CreateChromatinAssay(
+  counts = CRO4_ATAC_matrix,
+  min.features = 1000,
+  fragments = CRO4_fragment_object
+) 
+
+CRO4_ATAC_object <- CreateSeuratObject(
+  counts = CRO4_ATAC_assay, 
+  assay = "peaks",
+  meta.data = CRO4_metadata,
+  min.cells = 0,
+  min.features = 0)
+```
+```{r}
+CRO4_metadata %>% 
+  mutate(FRiP = atac_peak_region_fragments/atac_fragments * 100) %>% 
+  mutate(FRiT = atac_TSS_fragments/atac_fragments * 100) %>% 
+  ggplot(aes(x = atac_fragments, y = FRiP)) +
+  geom_point(alpha = 0.5) +
+  scale_x_log10() +
+  #scale_y_log10() +
+  theme_classic()
+
+CRO4_metadata %>% 
+  mutate(FRiP = atac_peak_region_fragments/atac_fragments * 100) %>% 
+  mutate(FRiT = atac_TSS_fragments/atac_fragments * 100) %>% 
+  ggplot(aes(x = atac_fragments, y = FRiT)) +
+  geom_point(alpha = 0.5) +
+  scale_x_log10() +
+  #scale_y_log10() +
+  theme_classic()
+```
+
+# Filter nuclei 
+## Nucleosome signal 
+```{r}
+CRO2_ATAC_object <- NucleosomeSignal(CRO2_ATAC_object)
+CRO3_ATAC_object <- NucleosomeSignal(CRO3_ATAC_object)
+CRO4_ATAC_object <- NucleosomeSignal(CRO4_ATAC_object)
+```
+
+## Reads in peaks 
+```{r}
+CRO2_ATAC_object$read_in_peaks <- CRO2_ATAC_object$atac_peak_region_fragments / CRO2_ATAC_object$atac_fragments * 100
+
+CRO3_ATAC_object$read_in_peaks <- CRO3_ATAC_object$atac_peak_region_fragments / CRO3_ATAC_object$atac_fragments * 100
+
+CRO4_ATAC_object$read_in_peaks <- CRO4_ATAC_object$atac_peak_region_fragments / CRO4_ATAC_object$atac_fragments * 100
+```
+
+## TSS fractions
+```{r}
+CRO2_ATAC_object$TSS <- CRO2_ATAC_object$atac_TSS_fragments / CRO2_ATAC_object$atac_fragments * 100
+
+CRO3_ATAC_object$TSS <- CRO3_ATAC_object$atac_TSS_fragments / CRO3_ATAC_object$atac_fragments * 100
+
+CRO4_ATAC_object$TSS <- CRO4_ATAC_object$atac_TSS_fragments / CRO4_ATAC_object$atac_fragments * 100
+```
+
+ 
+## Filter per sample 
+### CRO2
+```{r}
+CRO2_ATAC_object@meta.data %>% head()
+```
+
+```{r}
+CRO2_ATAC_object@meta.data %>% 
+  ggplot(aes(y = nFeature_peaks, x = atac_fragments)) +
+  geom_point(alpha = 0.5) +
+  geom_hline(yintercept = 1000, color = "red2") +
+  geom_vline(xintercept = 2000, color = "red2") +
+  scale_x_log10() +
+  scale_y_log10() +
+  theme_classic()
+```
+
+```{r}
+CRO3_ATAC_object@meta.data %>% 
+  ggplot(aes(y = nFeature_peaks, x = atac_fragments)) +
+  geom_point(alpha = 0.5) +
+  geom_hline(yintercept = 1000, color = "red2") +
+  geom_vline(xintercept = 2000, color = "red2") +
+  scale_x_log10() +
+  scale_y_log10() +
+  theme_classic()
+```
+
+```{r}
+CRO4_ATAC_object@meta.data %>% 
+  ggplot(aes(y = nFeature_peaks, x = atac_fragments)) +
+  geom_point(alpha = 0.5) +
+  scale_x_log10() +
+  scale_y_log10() +
+  geom_hline(yintercept = 1000, color = "red2") +
+  geom_vline(xintercept = 2000, color = "red2") +
+  theme_classic()
+```
+
+
+```{r}
+CRO2_ATAC_object <- subset(
+  x = CRO2_ATAC_object,
+  subset = nCount_peaks > 1000 & 
+    read_in_peaks > 25 &
+    atac_fragments > 2000
+    
+)
+
+CRO2_ATAC_object
+```
+
+### CRO3
+```{r}
+CRO3_ATAC_object <- subset(
+  x = CRO3_ATAC_object,
+  subset = nCount_peaks > 1000 & 
+    read_in_peaks > 25 &
+    atac_fragments > 2000
+    
+)
+
+CRO3_ATAC_object
+```
+
+
+### CRO4
+```{r}
+CRO4_ATAC_object <- subset(
+  x = CRO4_ATAC_object,
+  subset = nCount_peaks > 1000 & 
+    read_in_peaks > 25 &
+    atac_fragments > 2000
+    
+)
+
+CRO4_ATAC_object
+```
+
+
+# Pre-integration processing
+```{r}
+CRO2_ATAC_object <- FindTopFeatures(CRO2_ATAC_object, min.cutoff = 10)
+CRO3_ATAC_object <- FindTopFeatures(CRO3_ATAC_object, min.cutoff = 10)
+CRO4_ATAC_object <- FindTopFeatures(CRO4_ATAC_object, min.cutoff = 10)
+```
+
+```{r}
+CRO2_ATAC_object <- RunTFIDF(CRO2_ATAC_object, verbose = F)
+CRO3_ATAC_object <- RunTFIDF(CRO3_ATAC_object, verbose = F)
+CRO4_ATAC_object <- RunTFIDF(CRO4_ATAC_object, verbose = F)
+```
+
+```{r}
+CRO2_ATAC_object <- RunSVD(CRO2_ATAC_object, verbose = F, approx = F)
+CRO3_ATAC_object <- RunSVD(CRO3_ATAC_object, verbose = F, approx = F)
+CRO4_ATAC_object <- RunSVD(CRO4_ATAC_object, verbose = F, approx = F)
+```
+
+# Merge first 
+```{r}
+CRO2_ATAC_object$run <- "CRO2"
+CRO3_ATAC_object$run <- "CRO3"
+CRO4_ATAC_object$run <- "CRO4"
+
+CRO_ATAC_combined <- merge(CRO2_ATAC_object,
+                           list(CRO3_ATAC_object, CRO4_ATAC_object), 
+                           #add.cell.ids = c("CRO2", "CRO3", "CRO4")
+                           )
+
+CRO_ATAC_combined <- FindTopFeatures(CRO_ATAC_combined, min.cutoff = 10)
+CRO_ATAC_combined <- RunTFIDF(CRO_ATAC_combined, verbose = F)
+CRO_ATAC_combined <- RunSVD(CRO_ATAC_combined, verbose = F)
+
+CRO_ATAC_combined <- RunUMAP(CRO_ATAC_combined, reduction = "lsi", dims = 1:30)
+```
+
+ 
+
+# Integration 
+```{r}
+ATAC_integration_anchors <- FindIntegrationAnchors(
+  object.list = list(CRO2_ATAC_object, CRO3_ATAC_object, CRO4_ATAC_object),
+  anchor.features = rownames(CRO2_ATAC_object1),
+  reduction = "rlsi",
+  dims = 2:30
+)
+
+CRO_ATAC <- IntegrateEmbeddings(
+  anchorset = ATAC_integration_anchors, 
+  reductions = CRO_ATAC_combined[["lsi"]],
+  new.reduction.name = "integrated_lsi",
+  dims.to.integrate = 1:30
+)
+
+CRO_ATAC <- RunUMAP(CRO_ATAC, reduction = "integrated_lsi", dims = 2:30)
+
+Integrated <- DimPlot(CRO_ATAC, group.by = "run") +
+  ggtitle("Integrated")
+
+Integrated
+```
+
+```{r}
+DimPlot(CRO_ATAC, group.by = "run", split.by = "run") 
+
+ggsave("../Results/R_output/ATAC_UMAP_by_run.svg", height = 3, width = 6, bg = "white")
+ggsave("../Results/R_output/ATAC_UMAP_by_run.png", height = 3, width = 6, bg = "white")
+```
+
+# Clustering 
+```{r}
+CRO_ATAC <- RunTFIDF(CRO_ATAC, verbose = F)
+CRO_ATAC <- FindTopFeatures(CRO_ATAC, min.cutoff = 'q5')
+CRO_ATAC <- RunSVD(CRO_ATAC, verbose = F)
+CRO_ATAC <- RunUMAP(CRO_ATAC, reduction = "integrated_lsi", dims = 2:30, 
+                    min.dist = 0.001, repulsion.strength = 1, n.neighbors = 30, spread = 1,
+                    reduction.name = "umap.atac", reduction.key = "atacUMAP_")
+
+DimPlot(CRO_ATAC, group.by = "run", reduction = "umap.atac") 
+```
+
+```{r}
+CRO_ATAC <- FindNeighbors(CRO_ATAC, reduction = "lsi", dims = 1:30)
+CRO_ATAC <- FindClusters(CRO_ATAC, verbose = F, algorithm = 2)
+DimPlot(CRO_ATAC, label = T, reduction = "umap.atac") + NoLegend()
+```
+```{r}
+DefaultAssay(CRO_ATAC) <- "peaks"
+saveRDS(CRO_ATAC, "../Results/R_output/CRO_ATAC.Rds")
+```
+
+# Integrate with RNA 
+## Pull RNA object 
+```{r}
+CRO_RNA <- readRDS("../Results/R_output/CRO_RNA.Rds") 
+DefaultAssay(CRO_RNA) <- "RNA"
+```
+
+```{r}
+CRO_RNA
+CRO_ATAC
+```
+
+## Subset shared barcodes 
+```{r}
+shared_cells <- intersect(
+  colnames(CRO_RNA),
+  str_remove(colnames(CRO_ATAC), "-1")
+)
+
+CRO_RNA@meta.data$barcode <- row.names(CRO_RNA@meta.data)
+CRO_ATAC@meta.data$barcode <- row.names(CRO_ATAC@meta.data)
+
+CRO_RNA$cell <- colnames(CRO_RNA)
+CRO_ATAC$cell<- str_remove(colnames(CRO_ATAC), "-1")
+
+
+CRO_RNA_subset <- subset(
+  x = CRO_RNA,
+  subset = cell %in% shared_cells 
+)
+
+CRO_ATAC_subset <- subset(
+  x = CRO_ATAC,
+  subset = cell %in% shared_cells 
+)
+
+
+#colnames(CRO_RNA_subset)
+dim(CRO_ATAC_subset)
+dim(CRO_RNA_subset)
+
+# row.names(CRO_ATAC@meta.data) <- str_remove(colnames(CRO_ATAC), "-1")
+CRO_ATAC_subset_renamed <- RenameCells(CRO_ATAC_subset, 
+            new.names = str_remove(colnames(CRO_ATAC_subset), "-1"))
+```
+
+## Append objects 
+```{r}
+CRO_multiome <- CRO_RNA_subset
+DefaultAssay(CRO_multiome) <- "RNA"
+CRO_multiome[["peaks"]] <- CRO_ATAC_subset_renamed[["peaks"]]
+
+CRO_multiome
+```
+
+## Joint Visualization 
+```{r}
+DefaultAssay(CRO_multiome) <- "RNA"
+
+CRO_multiome <- SCTransform(CRO_multiome, verbose = FALSE) %>% 
+  RunPCA() %>% 
+  RunUMAP(dims = 1:30, reduction.name = 'umap.rna', reduction.key = 'rnaUMAP_',
+          min.dist = 0.001, repulsion.strength = 1, n.neighbors = 30, spread = 1)
+
+DefaultAssay(CRO_multiome) <- "peaks" 
+CRO_multiome <- RunTFIDF(CRO_multiome)
+
+CRO_multiome <- FindTopFeatures(CRO_multiome, min.cutoff = "q5")
+CRO_multiome <- RunSVD(CRO_multiome)
+CRO_multiome <- RunUMAP(CRO_multiome, reduction = "lsi", 
+                        dims = 2:30, reduction.name = "umap.atac", reduction.key = "atacUMAP_",
+                        min.dist = 0.001, repulsion.strength = 1, n.neighbors = 30, spread = 1)
+
+CRO_multiome <- FindMultiModalNeighbors(
+  CRO_multiome, reduction.list = list("pca", "lsi"), 
+  dims.list = list(1:30, 2:30), verbose = F
+)
+
+CRO_multiome <- RunUMAP(CRO_multiome, 
+                        nn.name = "weighted.nn", reduction.name = "wnn.umap",
+                        reduction.key = "wnnUMAP_",
+                        min.dist = 0.001, repulsion.strength = 1, n.neighbors = 30, spread = 1,
+                        verbose = F)
+
+```
+
+
+```{r}
+CRO_multiome@meta.data <- CRO_multiome@meta.data %>% 
+  mutate(cell_type = case_when(
+    seurat_clusters == 0 | 
+      seurat_clusters == 1 | 
+      seurat_clusters == 3 | 
+      seurat_clusters ==7  ~ "Mesophyll",
+    seurat_clusters == 2 | 
+      seurat_clusters == 5 ~ "Epidermis",
+    seurat_clusters == 12 ~ "Guard cells",
+    seurat_clusters == 11 |
+      seurat_clusters == 6 |
+      seurat_clusters == 10 |
+      seurat_clusters == 14 |
+      seurat_clusters == 15  ~ "Vasculature",
+    seurat_clusters == 13 ~ "IPAP",
+      seurat_clusters == 8 ~ "Idioblast",
+    T ~ "Unassigned"
+  )) %>% 
+  mutate(cell_type = factor(cell_type,
+                      levels = c("Mesophyll", 
+                                            "Epidermis", "Guard cells",
+                                             "Vasculature", 
+                                             "IPAP", "Idioblast", "Unassigned"
+                                            )))
+CRO_multiome@meta.data %>% 
+  group_by(seurat_clusters) %>% 
+  count()
+
+CRO_multiome@meta.data %>% 
+  group_by(cell_type) %>% 
+  count()
+```
+
+```{r}
+
+Multi_RNA_umap <- DimPlot(CRO_multiome, reduction = "umap.rna", 
+                          group.by = "cell_type") +
+  ggtitle("RNA")
+
+Multi_ATAC_umap <- DimPlot(CRO_multiome, reduction = "umap.atac", 
+                          group.by = "cell_type") +
+  ggtitle("ATAC")
+
+Multi_joint_umap <- DimPlot(CRO_multiome, reduction = "wnn.umap", 
+                          group.by = "cell_type") +
+  ggtitle("Joint")
+
+wrap_plots(
+ Multi_RNA_umap,
+ Multi_ATAC_umap,
+ Multi_joint_umap,
+ nrow = 1, guides = "collect"
+) &
+  scale_color_manual(values = c(brewer.pal(6, "Accent")[1:3],
+                                brewer.pal(6, "Set2")[6],
+                                brewer.pal(6, "Accent")[5:6],
+                                "grey80")) &
+  theme_void() &
+  theme(
+    legend.position = "bottom",
+    plot.margin = margin(r = 1, l = 1, unit = "lines"),
+    text = element_text(size = 14)
+  ) 
+  
+ggsave("../Results/R_output/CRO_multiome_UMAP_bulk_peaks.svg", height = 3, width = 7, bg = "white")
+ggsave("../Results/R_output/CRO_multiome_UMAP_bulk_peaks.png", height = 3, width = 7, bg = "white")
+```
+```{r}
+saveRDS(CRO_multiome, "../Results/R_output/CRO_multiome.Rds")
+```
+
+
+ 

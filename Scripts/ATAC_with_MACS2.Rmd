@@ -1,0 +1,219 @@
+---
+title: "ATAC_with_MACS2_peaks"
+author: "Chenxin Li"
+date: "2022-12-21"
+output:  
+  html_notebook:
+    number_sections: yes
+    toc: yes
+    toc_float: yes
+  html_document:
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Packages
+```{r}
+library(tidyverse)
+library(Seurat) 
+library(Signac)
+library(GenomicRanges)
+library(readxl)
+
+library(RColorBrewer)
+library(viridis)
+library(rcartocolor)
+
+library(patchwork)
+```
+
+# Data 
+## The Seurat object 
+```{r}
+CRO_multiome <- readRDS("../Results/R_output/CRO_multiome.Rds")
+CRO_multiome
+```
+
+## Peaks
+```{r}
+macs2_peaks <- read_delim("../Results/MACS2_out/MACS2_broad_peaks.bed",
+                          delim = "\t", col_names = F, col_types = cols())
+
+macs2_peaks$X4 <- "name"
+head(macs2_peaks)
+```
+
+```{r}
+macs2_peaks %>% 
+  mutate(Length = X3 - X2) %>% 
+  ggplot(aes(x = Length)) +
+  geom_histogram(binwidth = 50, color = "white", 
+                 fill = rgb(180, 62, 68, maxColorValue = 255),
+                 alpha = 0.9) +
+  labs(x = "Length of ATAC peaks (bp)") +
+  theme_classic() +
+  coord_cartesian(xlim = c(100, 1500)) +
+  ggtitle("n = 44083 peaks")
+
+
+```
+
+```{r}
+macs2_peaks %>% 
+  mutate(Length = X3 - X2) %>% 
+  summarise(median = median(Length),
+            mean = mean(Length))
+```
+
+
+```{r}
+repr_gene_models <- read_delim("../../CRO_multiome/Data/cro_v3_anno/cro_v3.gene_models.repr.gff3", 
+                               delim = "\t", col_names = F, col_types = cols())
+```
+
+```{r}
+genes.bed <- repr_gene_models %>% 
+  filter(X3 == "mRNA") %>% 
+  select(X1, X4, X5, X9) %>% 
+  separate(X9, c("ID", "Name"), sep = ";") %>% 
+  dplyr::select(-Name) %>% 
+  separate(ID, c("temp", "gene_ID"), sep = "=") %>% 
+  select(-temp) %>% 
+  arrange(X1, X4)
+
+genes.bed
+```
+
+```{r}
+write_delim(genes.bed, "../Results/R_output/genes.bed",
+                delim = "\t", col_names = F)
+```
+
+```{r}
+nearest <- read_delim("../Results/MACS2_out/MACS2_broad_nearest.txt",
+                      col_types = cols(), col_names = F, delim = "\t")
+
+head(nearest)
+```
+```{r}
+nearest %>% 
+  ggplot(aes(x = X8 + 1)) +
+  geom_histogram(bins = 100, color = "white", 
+                 fill = rgb(180, 62, 68, maxColorValue = 255),
+                 alpha = 0.9) +
+  scale_x_log10() +
+  labs(x = "distance to nearest gene (bp)") +
+  theme_classic() 
+```
+
+
+# Produce GRange from bed
+```{r}
+macs2_peaks_granges <- lapply(split(macs2_peaks, macs2_peaks$X4), function(i){
+  GRanges(seqnames = i$X1,
+          ranges = IRanges(
+            start = i$X2,
+            end = i$X3
+          ))
+})
+
+granges(CRO_multiome[["peaks"]])
+#macs2_peaks_granges$name <- NULL
+macs2_peaks_granges
+```
+```{r}
+macs2_peaks_nice <- keepStandardChromosomes(macs2_peaks_granges$name, pruning.mode = "coarse")
+macs2_peaks_nice
+```
+
+# Compute counts over macs2 peaks 
+```{r}
+DefaultAssay(CRO_multiome) <- "peaks"
+macs2_counts <- FeatureMatrix(
+  fragments = Fragments(CRO_multiome),
+  features = macs2_peaks_nice,
+  cells = colnames(CRO_multiome)
+)
+```
+
+
+# Create a new assay within CRO_multiome 
+```{r}
+CRO_multiome[["MACS2"]] <- CreateChromatinAssay(
+  counts = macs2_counts,
+  fragments = Fragments(CRO_multiome)
+)
+
+DefaultAssay(CRO_multiome) <- "MACS2"
+CRO_multiome
+```
+
+
+# UMAP 
+```{r}
+DefaultAssay(CRO_multiome) <- "MACS2" 
+CRO_multiome <- RunTFIDF(CRO_multiome)
+CRO_multiome <- FindVariableFeatures(CRO_multiome, assay = "MACS2", nfeatures = 5000)
+CRO_multiome <- FindTopFeatures(CRO_multiome, min.cutoff = NULL)
+CRO_multiome <- RunSVD(CRO_multiome)
+CRO_multiome <- RunUMAP(CRO_multiome, reduction = "lsi", 
+                        dims = 2:30, reduction.name = "umap.atac", reduction.key = "atacUMAP_",
+                        min.dist = 0.001, repulsion.strength = 1, n.neighbors = 30, spread = 1)
+
+CRO_multiome <- FindMultiModalNeighbors(
+  CRO_multiome, reduction.list = list("pca", "lsi"), 
+  dims.list = list(1:30, 2:30)
+)
+
+CRO_multiome <- RunUMAP(CRO_multiome, 
+                        nn.name = "weighted.nn", reduction.name = "wnn.umap",
+                        reduction.key = "wnnUMAP_",
+                        min.dist = 0.001, repulsion.strength = 1, n.neighbors = 30, spread = 1,
+                        verbose = F)
+
+```
+
+```{r}
+#CRO_multiome <- readRDS("../Results/R_output/CRO_multiome.Rds")
+Multi_RNA_umap <- DimPlot(CRO_multiome, reduction = "umap.rna", 
+                          group.by = "cell_type") +
+  ggtitle("RNA")
+
+Multi_ATAC_umap <- DimPlot(CRO_multiome, reduction = "umap.atac", 
+                          group.by = "cell_type") +
+  ggtitle("ATAC")
+
+Multi_joint_umap <- DimPlot(CRO_multiome, reduction = "wnn.umap", 
+                          group.by = "cell_type") +
+  ggtitle("Joint")
+
+combined_UMAPs <- wrap_plots(
+ Multi_RNA_umap + 
+   labs(tag = "A"),
+ Multi_ATAC_umap,
+ Multi_joint_umap,
+ nrow = 1, guides = "collect"
+) &
+  scale_color_manual(values = c(brewer.pal(6, "Accent")[1:3],
+                                brewer.pal(6, "Set2")[6],
+                                brewer.pal(6, "Accent")[5:6],
+                                "grey80")) &
+  theme_void() &
+  theme(
+    legend.position = "bottom",
+    plot.margin = margin(r = 1, l = 1, unit = "lines"),
+    text = element_text(size = 14)
+  ) 
+
+combined_UMAPs
+
+ggsave("../Results/R_output/CRO_multiome_UMAP.svg", height = 2.5, width = 7, bg = "white")
+ggsave("../Results/R_output/CRO_multiome_UMAP.png", height = 2.5, width = 7, bg = "white")
+```
+```{r}
+saveRDS(CRO_multiome, "../Results/R_output/CRO_multiome.Rds")
+```
+

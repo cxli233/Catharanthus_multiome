@@ -1,0 +1,512 @@
+---
+title: "Peak_and_genes"
+author: "Chenxin Li"
+date: "11/14/2022"
+output:  
+  html_notebook:
+    number_sections: yes
+    toc: yes
+    toc_float: yes
+  html_document:
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Package
+```{r}
+library(tidyverse)
+library(Seurat) 
+library(Signac)
+library(readxl)
+
+library(igraph)
+library(ggraph)
+
+library(RColorBrewer)
+library(viridis)
+library(rcartocolor)
+
+library(patchwork)
+
+set.seed(666)
+```
+
+# Data 
+## Multiome object
+```{r}
+CRO_multiome <- readRDS("../Results/R_output/CRO_multiome.Rds")
+DefaultAssay(CRO_multiome) <- "MACS2"
+```
+
+## Gene models 
+```{r}
+repr_gene_models <- read_delim("../Data/cro_v3_anno/cro_v3.gene_models.repr.gff3",
+                               delim = "\t", col_names = F)
+
+repr_loci <- repr_gene_models %>% 
+  dplyr::filter(X3 == "mRNA") %>% 
+  dplyr::select(X1, X4, X5, X7, X9) %>% 
+  separate(X9, c("ID", "Name"), sep = ";") %>% 
+  dplyr::select(-Name) %>% 
+  separate(ID, c("temp", "gene_ID"), sep = "=") %>% 
+  dplyr::select(-temp) %>% 
+  mutate(LocusID = str_sub(gene_ID, start = 1, end = 13)) %>% 
+  mutate(gene_ID = str_replace(gene_ID, "_", "-")) %>% 
+  mutate(LocusID = str_replace(LocusID, "_", "-")) %>% 
+  dplyr::rename(
+    Chr = X1,
+    start = X4,
+    end = X5,
+    strand = X7
+  )
+
+
+head(repr_loci)
+```
+
+```{r}
+macs2_peaks <- read_delim("../Results/MACS2_out/MACS2_broad_peaks.bed",
+                          delim = "\t", col_names = F, col_types = cols())
+
+arc_peaks <- read_delim("../Results/CellrangerArc_peaks.bed",
+                          delim = "\t", col_names = F, col_types = cols())
+```
+
+## sub-network data
+```{r}
+subnetwork_edges <- read_csv("../Results/R_output/subnetwork_edges.csv")
+subnetwork_genes <- read_csv("../Results/R_output/subnetwork_genes.csv")
+
+head(subnetwork_edges)
+head(subnetwork_genes)
+```
+
+# Graph some examples 
+## Idioblast 
+```{r}
+macs2_peaks %>% 
+  filter(X1 == "Chr2") %>% 
+  filter(X2 > 1605477) %>% 
+  filter(X3 < 1613000)
+```
+
+```{r}
+DefaultAssay(CRO_multiome) <- "MACS2"
+
+DAT_peak <- FeaturePlot(CRO_multiome, features = c("Chr2-1605892-1606190"),
+            reduction = "wnn.umap", order = T) +
+  scale_color_gradientn(colors = c("grey90", carto_pal(7, "Magenta")),
+                        breaks = c(0, 5), 
+                        labels = c("low", "high")) +
+  theme_void() +
+  theme(text = element_text(size = 14),
+        legend.position = "top",
+        plot.title = element_text(size = 12)) +
+  ggtitle("ATAC\nDAT promoter")
+  
+DefaultAssay(CRO_multiome) <- "RNA"
+DAT <- FeaturePlot(CRO_multiome, features = c("CRO-02G001090.1"),
+            reduction = "wnn.umap", order = T) +
+  scale_color_gradientn(colors = c("grey90", carto_pal(7, "Magenta")),
+                        breaks = c(0, 3), 
+                        labels = c("low", "high")) +
+  theme_void() +
+  theme(text = element_text(size = 14),
+        legend.position = "top",
+        plot.title = element_text(size = 12)) +
+  ggtitle("RNA\nDAT")
+
+wrap_plots(DAT_peak, DAT, ncol = 1)
+
+ggsave("../Results/R_output/DAT_example.svg", height = 5, width = 2.8, bg = "white")
+ggsave("../Results/R_output/DAT_example.png", height = 5, width = 2.8, bg = "white")
+```
+
+## Epidermis 
+```{r}
+macs2_peaks %>% 
+  filter(X1 == "Chr3") %>% 
+  filter(X2 > 69982446 - 5000) %>% 
+  filter(X3 < 69998194 + 5000)
+
+arc_peaks %>% 
+  filter(X1 == "Chr3") %>% 
+  filter(X2 > 69982446 - 5000) %>% 
+  filter(X3 < 69998194 + 5000)
+
+# Chr3-69982446-69983349 - T16H2 - CRO-03G030600.1
+# Chr3-69997425-69998194 - T16OMT - CRO-03G030620.1
+```
+### T16H, T16OMT cluster
+```{r}
+DefaultAssay(CRO_multiome) <- "peaks"
+
+T16H2_peak <- FeaturePlot(CRO_multiome, features = c("Chr3-69982446-69983349"),
+            reduction = "wnn.umap", order = T) +
+  scale_color_gradientn(colors = c("grey90", carto_pal(7, "Teal")),
+                        breaks = c(0, 5), 
+                        labels = c("low", "high")) +
+  theme_void() +
+  theme(text = element_text(size = 14),
+        legend.position = "top",
+        plot.title = element_text(size = 12)) +
+  ggtitle("ATAC\nT16H2 promoter")
+
+T16OMT_peak <- FeaturePlot(CRO_multiome, features = c("Chr3-69997351-69998252"),
+            reduction = "wnn.umap", order = T) +
+  scale_color_gradientn(colors = c("grey90", carto_pal(7, "Teal")),
+                        breaks = c(0, 4), 
+                        labels = c("low", "high")) +
+  theme_void() +
+  theme(text = element_text(size = 14),
+        legend.position = "top",
+        plot.title = element_text(size = 12)) +
+  ggtitle("ATAC\nT16OMT promoter")
+  
+DefaultAssay(CRO_multiome) <- "RNA"
+T16H2 <- FeaturePlot(CRO_multiome, features = c("CRO-03G030600.1"),
+            reduction = "wnn.umap", order = T) +
+  scale_color_gradientn(colors = c("grey90", carto_pal(7, "Teal")),
+                        breaks = c(0, 3), 
+                        labels = c("low", "high")) +
+  theme_void() +
+  theme(text = element_text(size = 14),
+        legend.position = "top",
+        plot.title = element_text(size = 12)) +
+  ggtitle("RNA\nT16H2")
+
+T16OMT <- FeaturePlot(CRO_multiome, features = c("CRO-03G030620.1"),
+            reduction = "wnn.umap", order = T) +
+  scale_color_gradientn(colors = c("grey90", carto_pal(7, "Teal")),
+                        breaks = c(0, 3), 
+                        labels = c("low", "high")) +
+  theme_void() +
+  theme(text = element_text(size = 14),
+        legend.position = "top",
+        plot.title = element_text(size = 12)) +
+  ggtitle("RNA\nT16OMT")
+
+wrap_plots(T16H2_peak, T16OMT_peak,
+           T16H2, T16OMT, ncol = 2)
+
+ggsave("../Results/R_output/T16H2_example.svg", height = 5, width = 4, bg = "white")
+ggsave("../Results/R_output/T16H2_example.png", height = 5, width = 4, bg = "white")
+```
+ 
+```{r}
+T16_dis1 <- FeaturePlot(CRO_multiome, features = c("Chr3-69985686-69986438"),
+            reduction = "wnn.umap", order = T) +
+  scale_color_gradientn(colors = c("grey90", carto_pal(7, "Teal")),
+                        breaks = c(0, 5), 
+                        labels = c("low", "high")) +
+  theme_void() +
+  theme(text = element_text(size = 14),
+        legend.position = "top",
+        plot.title = element_text(size = 12)) +
+  ggtitle("ATAC\nT16H2 distal peak 1")
+
+T16_dis2 <-FeaturePlot(CRO_multiome, features = c("Chr3-69997351-69998252"),
+            reduction = "wnn.umap", order = T) +
+  scale_color_gradientn(colors = c("grey90", carto_pal(7, "Teal")),
+                        breaks = c(0, 4), 
+                        labels = c("low", "high")) +
+  theme_void() +
+  theme(text = element_text(size = 14),
+        legend.position = "top",
+        plot.title = element_text(size = 12)) +
+  ggtitle("ATAC\nT16H2 distal peak 2")
+
+wrap_plots(T16_dis1, T16_dis2,
+           ncol = 2)
+
+ggsave("../Results/R_output/T16H2_example2.svg", height = 2.5, width = 4, bg = "white")
+ggsave("../Results/R_output/T16H2_example2.png", height = 2.5, width = 4, bg = "white")
+```
+
+
+### redox2 
+```{r}
+macs2_peaks %>% 
+  filter(X1 == "Chr5") %>% 
+  filter(X2 > 11149548) %>% 
+  filter(X3 < 11155799)
+
+```
+
+```{r}
+DefaultAssay(CRO_multiome) <- "MACS2"
+
+Redox2_pro <- FeaturePlot(CRO_multiome, features = c("Chr5-11149652-11149874"),
+            reduction = "wnn.umap", order = T) +
+  scale_color_gradientn(colors = c("grey90", carto_pal(7, "Teal")),
+                        breaks = c(0, 5), 
+                        labels = c("low", "high")) +
+  theme_void() +
+  theme(text = element_text(size = 14),
+        legend.position = "top",
+        plot.title = element_text(size = 12)) +
+  ggtitle("ATAC\nRedox2 promoter")
+
+Redox2_UTR <- FeaturePlot(CRO_multiome, features = c("Chr5-11155357-11155795"),
+            reduction = "wnn.umap", order = T) +
+  scale_color_gradientn(colors = c("grey90", carto_pal(7, "Teal")),
+                        breaks = c(0, 4), 
+                        labels = c("low", "high")) +
+  theme_void() +
+  theme(text = element_text(size = 14),
+        legend.position = "top",
+        plot.title = element_text(size = 12)) +
+  ggtitle("ATAC\nRedox2 3' UTR")
+
+DefaultAssay(CRO_multiome) <- "RNA"
+Redox2 <- FeaturePlot(CRO_multiome, features = c("CRO-05G008760.1"),
+            reduction = "wnn.umap", order = T) +
+  scale_color_gradientn(colors = c("grey90", carto_pal(7, "Teal")),
+                        breaks = c(0, 4), 
+                        labels = c("low", "high")) +
+  theme_void() +
+  theme(text = element_text(size = 14),
+        legend.position = "top",
+        plot.title = element_text(size = 12)) +
+  ggtitle("RNA\nRedox2")
+
+wrap_plots(Redox2_pro, Redox2_UTR, Redox2,
+           ncol = 3)
+
+ggsave("../Results/R_output/Redox2_example.svg", height = 2.5, width = 6, bg = "white")
+ggsave("../Results/R_output/Redox2_example.png", height = 2.5, width = 6, bg = "white")
+```
+
+
+# Coverage plots 
+## DAT
+```{r}
+DAT_gene <- repr_loci %>% 
+  dplyr::filter(Chr == "Chr2") %>% 
+  dplyr::filter(start > 1605477 - 5000) %>% 
+  dplyr::filter(end < 1606353 + 5000) %>% 
+  mutate(tag = case_when(
+    str_detect(gene_ID, "02G001090") ~ "DAT",
+    T ~ "other"
+  )) %>% 
+  mutate(caret = case_when(
+    strand == "+" ~ ">",
+    T ~ "<"
+  )) %>% 
+  mutate(hjust = case_when(
+    strand == "+" ~ -0.1,
+    T ~ 1.1
+  )) %>% 
+  mutate(caret.pos = case_when(
+    strand == "+" ~ start, 
+    T ~ end
+  )) %>% 
+  mutate(midpoint = (start + end)/2) %>% 
+  ggplot(aes(x = start, y = 1)) +
+  geom_hline(yintercept = 1, size = 1) +
+  geom_rect(aes(xmin = start, xmax = end, fill = tag),
+            ymin = 0.75, ymax = 1.25) +
+  geom_text(aes(x = caret.pos, hjust = hjust, label = caret), size = 4) +
+  geom_text(aes(x = midpoint, hjust = hjust, label = caret), size = 4) +
+  scale_fill_manual(values = c(brewer.pal(8, "Accent")[6], "grey80"),
+                    limits = c("DAT", "other")) +
+  labs(x = NULL,
+       y = NULL,
+       fill = "Genes") +
+  xlim(c(1605477-5000, 1606353+5000)) +
+  theme_minimal() +
+  theme(
+    panel.grid = element_blank(),
+    text = element_text(size = 14, color = "black"),
+    axis.text.y = element_blank(),
+    axis.text.x = element_blank(),
+    legend.position = "bottom"
+  )
+
+DAT_gene
+```
+
+```{r}
+DefaultAssay(CRO_multiome) <- "MACS2"
+DAT_cov <- CoveragePlot(region = "Chr2-1605477-1606353", CRO_multiome,
+             extend.upstream = 5000, extend.downstream = 5000,
+             group.by = "cell_type") &
+  scale_fill_manual(values = c(brewer.pal(6, "Accent")[1:3],
+                                brewer.pal(6, "Set2")[6],
+                                brewer.pal(6, "Accent")[5:6],
+                                "grey80")) &
+  xlim(c(1605477-5000, 1606353+5000)) &
+  labs(x = NULL) &
+  theme(
+    axis.text.x = element_blank()
+  )
+
+DAT_track <- wrap_plots(DAT_cov, DAT_gene, heights = c(1, 0.03), nrow = 2) # &
+#   theme(
+#     strip.text.y.left = element_blank(),
+#     axis.line.y.left = element_blank(),
+#     axis.ticks.y = element_blank()
+#   ) 
+DAT_track
+
+
+wrap_plots(DAT_cov, DAT_gene, heights = c(1, 0.03), nrow = 2)
+ggsave("../Results/R_output/DAT_coverage_plot.svg", width = 3.5, height = 4, bg = "white")
+ggsave("../Results/R_output/DAT_coverage_plot.png", width = 3.5, height = 4, bg = "white")
+```
+## T16H2-T16OMT 
+
+```{r}
+T16H2_region <- repr_loci %>% 
+  dplyr::filter(Chr == "Chr3") %>% 
+  dplyr::filter(start > 69982446-2100) %>% 
+  dplyr::filter(end < 69998194+500) %>% 
+  mutate(tag = case_when(
+    str_detect(gene_ID, "03G030620") ~ "16OMT",
+    str_detect(gene_ID, "03G030600") ~ "T16H2",
+    T ~ "other"
+  )) %>% 
+  mutate(caret = case_when(
+    strand == "+" ~ ">",
+    T ~ "<"
+  )) %>% 
+  mutate(hjust = case_when(
+    strand == "+" ~ -0.1,
+    T ~ 1.1
+  )) %>% 
+  mutate(caret.pos = case_when(
+    strand == "+" ~ start, 
+    T ~ end
+  )) %>% 
+  mutate(midpoint = (start + end)/2) %>% 
+  ggplot(aes(x = start, y = 1)) +
+  geom_hline(yintercept = 1, size = 1) +
+  geom_rect(aes(xmin = start, xmax = end, fill = tag),
+            ymin = 0.75, ymax = 1.25) +
+  geom_text(aes(x = caret.pos, hjust = hjust, label = caret), size = 4) +
+  geom_text(aes(x = midpoint, hjust = hjust, label = caret), size = 4) +
+  scale_fill_manual(values = c(brewer.pal(8, "Accent")[1:2], "grey80"),
+                    limits = c("T16H2", "16OMT","other")) +
+  labs(x = NULL,
+       y = NULL,
+       fill = "Genes") +
+  xlim(c(69982446-2100, 69998194+500)) +
+  theme_minimal() +
+  theme(
+    panel.grid = element_blank(),
+    text = element_text(size = 14, color = "black"),
+    axis.text.y = element_blank(),
+    axis.text.x = element_blank(),
+    legend.position = "bottom"
+  )
+
+```
+
+```{r}
+DefaultAssay(CRO_multiome) <- "peaks"
+
+T16H2_cov <- CoveragePlot(region = "Chr3-69982446-69998194", CRO_multiome,
+             extend.upstream = 2100, extend.downstream = 500,
+             group.by = "cell_type") &
+  scale_fill_manual(values = c(brewer.pal(6, "Accent")[1:3],
+                                brewer.pal(6, "Set2")[6],
+                                brewer.pal(6, "Accent")[5:6],
+                                "grey80")) &
+  xlim(c(69982446-2100, 69998194+500)) &
+  labs(x = NULL) &
+  theme(
+    axis.text.x = element_blank()
+  ) 
+
+T16_track <- wrap_plots(T16H2_cov, T16H2_region, heights = c(1, 0.03), nrow = 2)
+
+T16_track
+ggsave("../Results/R_output/T16H2_coverage_plot.svg", width = 4.2, height = 4, bg = "white")
+ggsave("../Results/R_output/T16H2_coverage_plot.png", width = 4.2, height = 4, bg = "white")
+```
+```{r}
+wrap_plots(
+  T16_track, DAT_track, 
+  widths = c(1, 0.02, 0.8),
+  design = c("A#B") 
+)
+
+ggsave("../Results/R_output/T16_DAT_coverage_plot.svg", width = 7.7, height = 4, bg = "white")
+ggsave("../Results/R_output/T16_DAT_coverage_plot.png", width = 7.7, height = 4, bg = "white")
+```
+```{r}
+69998194+500-69982446+2100
+1606353+5000-1605477+5000 
+```
+
+
+## Redox2 
+
+```{r}
+Redox2_gene <- repr_loci %>% 
+  dplyr::filter(Chr == "Chr5") %>% 
+  dplyr::filter(start > 11149548-500) %>% 
+  dplyr::filter(end < 11155799+500) %>% 
+  mutate(tag = case_when(
+    str_detect(gene_ID, "05G008760") ~ "Redox2",
+    T ~ "other"
+  )) %>% 
+  mutate(caret = case_when(
+    strand == "+" ~ ">",
+    T ~ "<"
+  )) %>% 
+  mutate(hjust = case_when(
+    strand == "+" ~ -0.1,
+    T ~ 1.1
+  )) %>% 
+  mutate(caret.pos = case_when(
+    strand == "+" ~ start, 
+    T ~ end
+  )) %>% 
+  mutate(midpoint = (start + end)/2) %>% 
+  ggplot(aes(x = start, y = 1)) +
+  geom_hline(yintercept = 1, size = 1) +
+  geom_rect(aes(xmin = start, xmax = end, fill = tag),
+            ymin = 0.75, ymax = 1.25) +
+  geom_text(aes(x = caret.pos, hjust = hjust, label = caret), size = 4) +
+  geom_text(aes(x = midpoint, hjust = hjust, label = caret), size = 4) +
+  scale_fill_manual(values = c(brewer.pal(8, "Accent")[2], "grey80"),
+                    limits = c("Redox2","other")) +
+  labs(x = NULL,
+       y = NULL,
+       fill = "Genes") +
+  xlim(c(11149548-500, 11155799+500))  +
+  theme_minimal() +
+  theme(
+    panel.grid = element_blank(),
+    text = element_text(size = 14, color = "black"),
+    axis.text.y = element_blank(),
+    axis.text.x = element_blank(),
+    legend.position = "bottom"
+  )
+
+```
+
+```{r}
+DefaultAssay(CRO_multiome) <- "MACS2"
+Redox2_cov <- CoveragePlot(region = "Chr5-11149548-11155799", CRO_multiome,
+             extend.upstream = 500, extend.downstream = 500,
+             group.by = "cell_type") &
+  scale_fill_manual(values = c(brewer.pal(6, "Accent")[1:3],
+                                brewer.pal(6, "Set2")[6],
+                                brewer.pal(6, "Accent")[5:6],
+                                "grey80")) &
+ xlim(c(11149548-500, 11155799+500)) 
+
+wrap_plots(Redox2_cov, Redox2_gene, heights = c(1, 0.03), nrow = 2)
+
+ggsave("../Results/R_output/Redox2_coverage_plot.svg", width = 4, height = 4, bg = "white")
+ggsave("../Results/R_output/Redox2_coverage_plot.png", width = 4, height = 4, bg = "white")
+```
+
+ 
+
+
