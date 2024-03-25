@@ -1,0 +1,397 @@
+---
+title: "protoplast"
+author: "Chenxin Li"
+date: "2024-02-05"
+output: html_notebook
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Packages 
+```{r}
+library(tidyverse)
+library(readxl)
+
+library(RColorBrewer)
+library(viridis)
+library(rcartocolor)
+
+library(patchwork)
+
+library(DESeq2)
+library(Seurat)
+
+set.seed(666)
+```
+
+# Data
+## Functional annotation 
+```{r}
+CRO_funct_anno <- read_delim("../../CRO_multiome/Data/cro_v3_anno/cro_v3.functional_annotation.txt",
+                             delim = "\t", col_names = F)
+
+head(CRO_funct_anno)
+```
+## Metadata
+```{r}
+metadata_protoplast <- read_excel("../Data/Guedes_et_al_metadata.xlsx")
+
+metadata_protoplast <- metadata_protoplast %>% 
+  dplyr::select(Run, cell_type) %>% 
+  mutate(ID = case_when(
+    str_detect(Run, "181$") ~ 1,
+    str_detect(Run, "182$") ~ 2,
+    str_detect(Run, "183$") ~ 3,
+    
+    str_detect(Run, "213$") ~ 4,
+    str_detect(Run, "214$") ~ 5,
+    str_detect(Run, "215$") ~ 6,
+  )) %>% 
+  filter(str_detect(cell_type, "meso|idio"))
+
+
+head(metadata_protoplast)
+```
+## kallisto outs 
+```{r}
+protoplasts_outs <- list.files("../Results/abundance_est_protoplast/", pattern = ".tsv", full.names = T)
+
+protoplast_data <- purrr::map(.x = protoplasts_outs, .f = read_delim,
+                            delim = "\t", col_types = cols()) %>% 
+  bind_rows(.id = "ID") %>% 
+  mutate(ID = as.numeric(ID)) %>% 
+  inner_join(metadata_protoplast, by = "ID")
+
+head(protoplast_data)
+```
+
+```{r}
+protoplast_exp_table <- protoplast_data %>% 
+  mutate(logTPM = log10(tpm+1)) 
+
+
+head(protoplast_exp_table)
+```
+# Check NMT, D4H, DAT, and THAS2 
+## MIA genes 
+```{r}
+MIA_genes <- read_csv("../Data/leaf_MIA_genes.csv")
+
+MIA_genes <- MIA_genes %>% 
+  filter(is.na(tag) == F) %>% 
+  mutate(gene = str_replace_all(gene_ID, "-", "_")) %>% 
+  mutate(gene = substring(gene, first = 1, last = 13)) %>% 
+  dplyr::select(gene, tag, `function`, order2, segment, gene_ID)
+
+head(MIA_genes)
+```
+```{r}
+protoplast_exp_table %>% 
+  mutate(cell_type2 = str_remove(cell_type, " protoplasts")) %>% 
+  mutate(gene = str_remove(target_id, "\\.\\d+")) %>% 
+  inner_join(MIA_genes, by = "gene") %>% 
+  mutate(tag = reorder(tag, order2)) %>% 
+  filter(tag %in% c("T16H2", "16OMT", "T3O", "T3R", "NMT", "D4H", "DAT", "THAS2")) %>% 
+  ggplot(aes(x = cell_type2, y=tpm+1)) +
+  facet_wrap(~tag, scales = "free", ncol = 2) +
+  geom_point(aes(fill = cell_type2), alpha = 0.8, size = 3, 
+             shape = 21, color = "white", 
+             position = position_jitter(width = 0.25, seed = 666)) +
+  scale_fill_manual(values = carto_pal(11, "Vivid")[c(2,4)]) +
+  labs(x = "cell type",
+       y = "tpm") +
+  theme_classic() +
+  theme(
+    legend.position = "none",
+    strip.background = element_blank(),
+    panel.spacing.y = unit(0.7, "lines")
+  )
+
+ggsave("../Results/R_outputs/protoplast_MIA_genes.svg", height = 6, width = 4)
+ggsave("../Results/R_outputs/protoplast_MIA_genes.png", height = 6, width = 4)
+```
+```{r}
+protoplast_exp_table %>% 
+  mutate(cell_type2 = str_remove(cell_type, " protoplasts")) %>% 
+  mutate(gene = str_remove(target_id, "\\.\\d+")) %>% 
+  filter(gene %in% c("CRO_03G000120", 
+                          "CRO_04G033370", "CRO_05G006800", "CRO_07G002170")) %>%
+  mutate(tag = case_when(
+    gene == "CRO_03G000120" ~ "IDW1",
+    gene == "CRO_04G033370" ~ "IDM2",
+    gene == "CRO_05G006800" ~ "IDM1",
+    gene == "CRO_07G002170" ~ "IDM3"
+  )) %>% 
+  mutate(tag = factor(tag, levels = c(
+     "IDW1", "IDM3", "IDM2", "IDM1"
+  ))) %>%  
+  mutate(tag = fct_rev(tag)) %>% 
+  ggplot(aes(x = cell_type2, y=tpm)) +
+  facet_wrap(~tag, scales = "free", ncol = 4) +
+  geom_point(aes(fill = cell_type2), alpha = 0.8, size = 3, 
+             shape = 21, color = "white", 
+             position = position_jitter(width = 0.1, seed = 666)) +
+  stat_summary(geom = "pointrange", fun.data = "mean_se", size = 0.2, shape = 4) +
+  scale_fill_manual(values = carto_pal(11, "Vivid")[c(2,4)]) +
+  labs(x = NULL,
+       y = "tpm",
+       fill = "cell type") +
+  theme_classic() +
+  theme(
+    legend.position = "bottom",
+    strip.background = element_blank(),
+    axis.text.x = element_blank(),
+    panel.spacing.y = unit(0.7, "lines")
+  )
+
+ggsave("../Results/R_outputs/protoplast_TF_candidates.svg", height = 2, width = 5.5)
+ggsave("../Results/R_outputs/protoplast_TF_candidates.png", height = 2, width = 5.5)
+```
+# DEseq 
+## Make count table 
+
+```{r}
+protoplast_count_table <- protoplast_exp_table %>% 
+  mutate(count = as.integer(est_counts)) %>% 
+  dplyr::select(target_id, count, Run) %>% 
+  pivot_wider(names_from = Run, values_from = count) %>% 
+  as.data.frame()
+
+row.names(protoplast_count_table) <- protoplast_count_table$target_id
+head(protoplast_count_table)
+```
+## Construct DESeqDataSet object 
+```{r}
+metadata_protoplast2 <- metadata_protoplast %>% 
+  mutate(cell_type2 = str_remove(cell_type, " protoplasts")) %>% 
+  mutate(cell_type2 = factor(cell_type2, levels = c(
+    "mesophyll", "idioblast"
+  )))
+
+metadata_protoplast2
+```
+```{r}
+dds_proto <- DESeqDataSetFromMatrix(
+  countData = protoplast_count_table[,-1],
+  colData = metadata_protoplast2,
+  design = ~cell_type2, tidy = F
+)
+
+dds_proto
+```
+## Run DESeq2 
+```{r}
+dds_proto <- DESeq(dds_proto)
+```
+
+# DEseq results
+```{r}
+proto_results <- results(dds_proto, contrast = c("cell_type2", "idioblast", "mesophyll"))
+proto_results
+```
+
+```{r}
+idoi_up <- proto_results %>% 
+  as.data.frame() %>% 
+  filter(padj < 0.05) %>% 
+  filter(log2FoldChange > 0) %>% 
+  mutate(gene_ID = row.names(.)) %>% 
+  mutate(gene_ID2 = str_replace_all(gene_ID, "_", "-")) %>% 
+  arrange(-log2FoldChange) %>% 
+  left_join(CRO_funct_anno, by = c("gene_ID" = "X1"))
+
+idoi_up
+```
+```{r}
+idoi_down <- proto_results %>% 
+  as.data.frame() %>% 
+  filter(padj < 0.05) %>% 
+  filter(log2FoldChange <0) %>% 
+  mutate(gene_ID = row.names(.)) %>% 
+  mutate(gene_ID2 = str_replace_all(gene_ID, "_", "-")) %>% 
+  arrange(log2FoldChange) %>% 
+  left_join(CRO_funct_anno, by = c("gene_ID" = "X1"))
+
+idoi_down
+```
+
+## My TFs? 
+```{r}
+idoi_up %>% 
+  mutate(rank = rank(-log2FoldChange)) %>% 
+  mutate(gene = str_remove(gene_ID, "\\.\\d+")) %>% 
+  filter(gene %in% c("CRO_03G000120", 
+                          "CRO_04G033370", "CRO_05G006800", "CRO_07G002170")) %>% 
+  mutate(tag = case_when(
+    gene == "CRO_03G000120" ~ "IDW1",
+    gene == "CRO_04G033370" ~ "IDM2",
+    gene == "CRO_05G006800" ~ "IDM1",
+    gene == "CRO_07G002170" ~ "IDM3"
+  ))
+```
+
+IDM1/2 and IDW1 ranked top 50 among 1795 idioblast DE genes in the protoplast experiment. 
+IDM3 ranked 253/1795. 
+
+## MIA genes
+```{r}
+idoi_up %>% 
+  mutate(rank = rank(-log2FoldChange)) %>% 
+  mutate(gene = str_remove(gene_ID, "\\.\\d+")) %>% 
+  filter(gene %in% c("CRO_03G003150", 
+                          "CRO_06G013360", "CRO_02G001090", "CRO_06G024620")) %>% 
+  mutate(tag = case_when(
+    gene == "CRO_03G003150" ~ "NMT",
+    gene == "CRO_06G013360" ~ "D4H",
+    gene == "CRO_02G001090" ~ "DAT",
+    gene == "CRO_06G024620" ~ "THAS2"
+  ))
+```
+
+# Heat map across single cells
+```{r}
+CRO_RNA <- readRDS("../../CRO_multiome/Results/R_output/CRO_RNA.Rds")
+CRO_RNA
+```
+```{r}
+leaf_cell_type_assignment <- data.frame(
+  cluster = c(0:15)
+) %>% 
+  mutate(cell_type = case_when(
+    cluster == 0 | 
+      cluster == 1 | 
+      cluster == 3 | 
+      cluster ==7  ~ "Mesophyll",
+    cluster == 2 | 
+      cluster == 5 ~ "Epidermis",
+    cluster == 12 ~ "Guard cells",
+    cluster == 11 |
+      cluster == 6 |
+      cluster == 10 |
+      cluster == 14 |
+      cluster == 15  ~ "Vasculature",
+    cluster == 13 ~ "IPAP",
+      cluster == 8 ~ "Idioblast",
+    T ~ "Unassigned"
+  )) %>% 
+  mutate(cell_type = factor(cell_type, 
+                            levels = c(
+                              "Mesophyll", "Epidermis", "Guard cells",
+                              "Vasculature", 
+                              "IPAP", "Idioblast", "Unassigned"
+                            ))) %>% 
+ mutate(cluster = factor(cluster, levels = c(
+    "0", "1", "3", "7", 
+    "2","5", 
+    "12",
+    "11", "6", "10", "14", "15",
+    "13", "8",
+    "4", "9"
+  )))
+
+Leaf_cell_type_strip <- leaf_cell_type_assignment %>% 
+  ggplot(aes(x = cluster, y = "" )) +
+  geom_tile(aes(fill = cell_type)) +
+  scale_fill_manual(values = c(brewer.pal(6, "Accent"), "grey80")) +
+  labs(fill = "Cell type") +
+  theme_void() +
+  theme(
+    legend.position = "bottom" ,
+    text = element_text(size = 14)
+  )
+
+#Leaf_cell_type_strip
+```
+
+## Up genes
+```{r}
+up_dot <- DotPlot(CRO_RNA, features = idoi_up$gene_ID2)$data 
+```
+```{r}
+up_dot_peak_exp <- up_dot %>% 
+  group_by(features.plot) %>% 
+  slice_max(n = 1, order_by = avg.exp.scaled) %>% 
+  dplyr::select(features.plot, id)  %>% 
+  mutate(order_y = as.numeric(id)) %>% 
+  dplyr::rename(peak_cluster = id)  
+  
+
+dim(up_dot_peak_exp)
+
+up_dot_peak_exp %>% 
+  group_by(peak_cluster) %>% 
+  dplyr::count() %>% 
+  arrange(-n)
+```
+```{r}
+up_heat <- up_dot %>% 
+  left_join(up_dot_peak_exp, by = "features.plot") %>% 
+  mutate(features.plot = reorder(features.plot, -order_y)) %>% 
+  ggplot(aes(x = id, y = features.plot)) +
+  geom_tile(aes(fill = avg.exp.scaled)) +
+  scale_fill_gradientn(colors = brewer.pal(9, "YlGnBu")) +
+  labs(x = "Cluster",
+       y = "Genes",
+       fill = "Avg. Exp.",
+       title = "Idioblast protoplast DE up genes") + 
+  theme_classic() +
+  theme(axis.text.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.text = element_text(color = "black"),
+        legend.position = "top")
+
+wrap_plots(up_heat, Leaf_cell_type_strip,
+           nrow = 2, heights = c(1, 0.05))
+
+ggsave("../Results/R_outputs/Idoiblat_protoplast_DE_up.svg", height = 4, width = 6)
+ggsave("../Results/R_outputs/Idoiblat_protoplast_DE_up.png", height = 4, width = 6)
+```
+
+## Down genes 
+```{r}
+down_dot <- DotPlot(CRO_RNA, features = idoi_down$gene_ID2)$data 
+```
+
+```{r}
+down_dot_peak_exp <- down_dot %>% 
+  group_by(features.plot) %>% 
+  slice_max(n = 1, order_by = avg.exp.scaled) %>% 
+  dplyr::select(features.plot, id)  %>% 
+  mutate(order_y = as.numeric(id)) %>% 
+  dplyr::rename(peak_cluster = id)  
+  
+
+dim(down_dot_peak_exp)
+
+down_dot_peak_exp %>% 
+  group_by(peak_cluster) %>% 
+  dplyr::count() %>% 
+  arrange(-n)
+```
+
+```{r}
+down_heat <- down_dot %>% 
+  left_join(down_dot_peak_exp, by = "features.plot") %>% 
+  mutate(features.plot = reorder(features.plot, -order_y)) %>% 
+  ggplot(aes(x = id, y = features.plot)) +
+  geom_tile(aes(fill = avg.exp.scaled)) +
+  scale_fill_gradientn(colors = brewer.pal(9, "YlGnBu")) +
+  labs(x = "Cluster",
+       y = "Genes",
+       fill = "Avg. Exp.",
+       title = "Idioblast protoplast DE down genes") + 
+  theme_classic() +
+  theme(axis.text.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.text = element_text(color = "black"),
+        legend.position = "top")
+
+wrap_plots(down_heat, Leaf_cell_type_strip,
+           nrow = 2, heights = c(1, 0.05))
+
+ggsave("../Results/R_outputs/Idoiblat_protoplast_DE_down.svg", height = 4, width = 6)
+ggsave("../Results/R_outputs/Idoiblat_protoplast_DE_down.png", height = 4, width = 6)
+```
+

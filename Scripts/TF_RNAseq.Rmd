@@ -1,0 +1,1745 @@
+---
+title: "TF_RNAseq"
+author: "Chenxin Li"
+date: "2023-11-10"
+output: html_notebook
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Packages
+```{r}
+library(tidyverse)
+library(readxl)
+
+library(RColorBrewer)
+library(viridis)
+library(rcartocolor)
+
+library(patchwork)
+
+library(DESeq2)
+library(Seurat)
+library(Signac)
+
+set.seed(666)
+```
+
+
+# Data 
+## Functional annotation 
+```{r}
+CRO_funct_anno <- read_delim("../../CRO_multiome/Data/cro_v3_anno/cro_v3.functional_annotation.txt",
+                             delim = "\t", col_names = F)
+
+head(CRO_funct_anno)
+```
+
+## Metadata
+```{r}
+metadata1 <- read_excel("../Data/SampleID_BMKID_nice.xlsx")
+metadata2 <- read_excel("../Data/SampleID_batch2_nice.xlsx")
+metadata3 <- read_excel("../Data/SampleID_batch3_nice.xlsx")
+
+metadata <- rbind(metadata1, metadata2, metadata3)
+head(metadata)
+```
+
+## kallisto outs 
+```{r}
+batch1_outs <- list.files("../Results/abundance_est_batch1", pattern = ".tsv", full.names = T)
+
+batch1_data <- purrr::map(.x = batch1_outs, .f = read_delim,
+                            delim = "\t", col_types = cols()) %>% 
+  bind_rows(.id = "ID") %>% 
+  mutate(ID = as.numeric(ID)) %>% 
+  inner_join(metadata1, by = "ID")
+
+head(batch1_data)
+```
+
+```{r}
+batch1_data %>% 
+  group_by(`Sample ID`, TF, OD, ID) %>% 
+  dplyr::count()
+```
+
+
+```{r}
+batch2_outs <- list.files("../Results/abundance_est_batch2", pattern = ".tsv", full.names = T)
+
+batch2_data <- purrr::map(.x = batch2_outs, .f = read_delim,
+                            delim = "\t", col_types = cols()) %>% 
+  bind_rows(.id = "ID") %>% 
+  mutate(ID = as.numeric(ID)) %>% 
+  inner_join(metadata2, by = "ID")
+
+head(batch2_data)
+```
+```{r}
+batch2_data %>% 
+  group_by(`Sample ID`, TF, OD, ID) %>% 
+  dplyr::count()
+```
+
+
+```{r}
+batch3_outs <- list.files("../Results/abundance_est_batch3", pattern = ".tsv", full.names = T)
+
+batch3_data <- purrr::map(.x = batch3_outs, .f = read_delim,
+                            delim = "\t", col_types = cols()) %>% 
+  bind_rows(.id = "ID") %>% 
+  mutate(ID = as.numeric(ID)) %>% 
+  inner_join(metadata3, by = "ID")
+
+head(batch3_data)
+```
+
+## Wrangle data 
+```{r}
+gene_table_long <- rbind(
+  batch1_data,
+  batch2_data,
+  batch3_data
+) %>% 
+  mutate(logTPM = log10(tpm+1)) 
+
+
+head(gene_table_long)
+```
+```{r}
+gene_table_long %>% 
+  group_by(TF, OD, `Sample ID`) %>% 
+  dplyr::count()
+```
+# Load single cell expression pattern 
+ 
+```{r}
+CRO_RNA <- readRDS("../../CRO_multiome/Results/R_output/CRO_RNA.Rds")
+CRO_RNA
+```
+
+```{r}
+leaf_cell_type_assignment <- data.frame(
+  cluster = c(0:15)
+) %>% 
+  mutate(cell_type = case_when(
+    cluster == 0 | 
+      cluster == 1 | 
+      cluster == 3 | 
+      cluster ==7  ~ "Mesophyll",
+    cluster == 2 | 
+      cluster == 5 ~ "Epidermis",
+    cluster == 12 ~ "Guard cells",
+    cluster == 11 |
+      cluster == 6 |
+      cluster == 10 |
+      cluster == 14 |
+      cluster == 15  ~ "Vasculature",
+    cluster == 13 ~ "IPAP",
+      cluster == 8 ~ "Idioblast",
+    T ~ "Unassigned"
+  )) %>% 
+  mutate(cell_type = factor(cell_type, 
+                            levels = c(
+                              "Mesophyll", "Epidermis", "Guard cells",
+                              "Vasculature", 
+                              "IPAP", "Idioblast", "Unassigned"
+                            ))) %>% 
+ mutate(cluster = factor(cluster, levels = c(
+    "0", "1", "3", "7", 
+    "2","5", 
+    "12",
+    "11", "6", "10", "14", "15",
+    "13", "8",
+    "4", "9"
+  )))
+
+Leaf_cell_type_strip <- leaf_cell_type_assignment %>% 
+  ggplot(aes(x = cluster, y = "" )) +
+  geom_tile(aes(fill = cell_type)) +
+  scale_fill_manual(values = c(brewer.pal(6, "Accent"), "grey80")) +
+  labs(fill = "Cell type") +
+  theme_void() +
+  theme(
+    legend.position = "bottom" ,
+    text = element_text(size = 14)
+  )
+
+# Leaf_cell_type_strip
+```
+
+# PCA
+## long to wide 
+```{r}
+tpm_wide <- gene_table_long %>% 
+  dplyr::select(target_id, logTPM, `Sample ID`) %>% 
+  pivot_wider(names_from = `Sample ID`, values_from = logTPM) %>% 
+  as.data.frame()
+
+row.names(tpm_wide) <- tpm_wide$target_id
+tpm_wide
+```
+
+## plot
+```{r}
+my_pca <- prcomp(t(tpm_wide[, -1]))
+pc_importance <- as.data.frame(t(summary(my_pca)$importance))
+head(pc_importance, 20)
+```
+```{r}
+PCA_coord <- my_pca$x[, 1:5] %>% 
+  as.data.frame() %>% 
+  mutate(`Sample ID` = row.names(.)) %>% 
+  full_join(metadata, by = "Sample ID") %>% 
+  mutate(TF2 = case_when(
+    str_detect(TF, "MYB1") ~ "IDM1",
+    str_detect(TF, "MYB2") ~ "IDM2",
+    str_detect(TF, "MYB3") ~ "IDM3",
+    str_detect(TF, "WRKY") ~ "IDW1",
+    T ~ TF
+  ))
+
+head(PCA_coord)
+```
+```{r}
+PCA_coord %>% 
+  mutate(TF2 = factor(TF2, levels = c(
+    "GUS", "IDW1", "IDM3", "IDM2", "IDM1", "Combo", "MYC2-ORCA3"
+  ))) %>% 
+  ggplot(aes(x = PC1, y = PC2)) +
+  geom_point(aes(fill = TF2), color = "grey20", shape = 21, size = 3, alpha = 0.8) +
+  scale_fill_manual(
+    values = c(carto_pal(5, "Vivid")[2], 
+               carto_pal(7, "SunsetDark")[7],
+               carto_pal(7, "Mint")[2:4],
+               carto_pal(7, "BluYl")[7],
+               brewer.pal(8, "Set2")[2])
+  ) +
+  labs(x = paste("PC1 (", pc_importance[1, 2] %>% signif(3)*100, "% of Variance)", sep = ""), 
+       y = paste("PC2 (", pc_importance[2, 2] %>% signif(3)*100, "% of Variance)", "  ", sep = ""),
+       fill = NULL) +  
+  theme_bw() +
+  theme(
+    text = element_text(size= 14),
+    axis.text = element_text(color = "black")
+  )
+
+ggsave("../Results/R_outputs/PCA.svg", height = 3, width = 4.5, bg = "white")
+ggsave("../Results/R_outputs/PCA.png", height = 3, width = 4.5, bg = "white")
+```
+ 
+```{r}
+PCA_coord %>% 
+  mutate(TF2 = factor(TF2, levels = c(
+    "GUS", "IDW1", "IDM3", "IDM2", "IDM1", "Combo", "MYC2-ORCA3"
+  ))) %>%  
+  mutate(txt = case_when(
+    TF %in% c("GUS", "MYB1", "MYC2-ORCA3") ~ as.character(TF2),
+    T ~ ""
+  )) %>% 
+  ggplot(aes(x = PC2, y = PC3)) +
+  geom_point(aes(fill = as.factor(OD)), color = "grey20", shape = 21, size = 3, alpha = 0.8) +
+  ggrepel::geom_label_repel(aes(label = txt)) +
+  scale_fill_manual(
+    values = c(carto_pal(5, "Vivid")[2],
+               carto_pal(7, "Safe")[2],
+               carto_pal(7, "Mint")[2:4],
+               carto_pal(7, "BluYl")[7],
+               brewer.pal(8, "Set2")[2])
+  ) +
+  labs(x = paste("PC2 (", pc_importance[2, 2] %>% signif(3)*100, "% of Variance)", sep = ""), 
+       y = paste("PC3 (", pc_importance[3, 2] %>% signif(3)*100, "% of Variance)", "  ", sep = ""),
+       fill = "OD") +  
+  theme_bw() +
+  theme(
+    text = element_text(size= 14),
+    axis.text = element_text(color = "black")
+  )
+
+ggsave("../Results/R_outputs/PCA_2.svg", height = 3, width = 4.5, bg = "white")
+ggsave("../Results/R_outputs/PCA_2.png", height = 3, width = 4.5, bg = "white")
+```
+ 
+ 
+# Pathway heatmap 
+ 
+## Average up to treatment and find z score
+```{r}
+gene_table_long_s <- gene_table_long %>% 
+  group_by(target_id, TF, OD) %>% 
+  summarise(mean.logTPM = mean(logTPM)) %>% 
+  ungroup() %>% 
+  group_by(target_id) %>% 
+  mutate(z.score = (mean.logTPM - mean(mean.logTPM))/sd(mean.logTPM)) %>% 
+  ungroup() %>% 
+  mutate(gene = substring(target_id, first = 1, last = 13))
+
+
+head(gene_table_long_s)
+```
+
+## MIA genes 
+```{r}
+TFs <- readRDS("../Data/MIA_genes_info.Rds")
+TFs <- TFs %>% 
+  filter(is.na(tag) == F) %>% 
+  filter(segment == "TF")
+
+TFs
+```
+
+```{r}
+MIA_genes <- read_csv("../Data/leaf_MIA_genes.csv")
+
+MIA_genes <- MIA_genes %>% 
+  filter(is.na(tag) == F) %>% 
+  mutate(gene = str_replace_all(gene_ID, "-", "_")) %>% 
+  mutate(gene = substring(gene, first = 1, last = 13)) %>% 
+  dplyr::select(gene, tag, `function`, order2, segment, gene_ID)
+
+head(MIA_genes)
+```
+
+## Check TF overexpression level
+
+CRO_05G006800 # MYB1
+CRO_07G002170 # MYB3
+CRO_04G033370 # MYB2
+CRO_03G000120 # WRKY
+CRO_06G029250 # ORCA3
+CRO_07G000280 # MYC2
+
+```{r}
+gene_table_long %>% 
+  filter(OD == 0.1) %>% 
+  mutate(gene = substring(target_id, first = 1, last = 13)) %>% 
+  filter(gene %in% c("CRO_03G000120", 
+                          "CRO_04G033370", "CRO_05G006800", "CRO_07G002170",
+                     "CRO_07G000280", "CRO_06G029250")) %>%
+  mutate(tag = case_when(
+    gene == "CRO_03G000120" ~ "IDW1",
+    gene == "CRO_04G033370" ~ "IDM2",
+    gene == "CRO_05G006800" ~ "IDM1",
+    gene == "CRO_07G002170" ~ "IDM3",
+    gene == "CRO_07G000280" ~ "MYC2",
+    gene == "CRO_06G029250" ~ "ORCA3"
+  )) %>% 
+  mutate(tag = factor(tag, levels = c(
+     "IDW1", "IDM3", "IDM2", "IDM1","MYC2", "ORCA3"
+  ))) %>%  
+  mutate(TF2 = case_when(
+    str_detect(TF, "MYB1") ~ "IDM1",
+    str_detect(TF, "MYB2") ~ "IDM2",
+    str_detect(TF, "MYB3") ~ "IDM3",
+    str_detect(TF, "WRKY") ~ "IDW1",
+    T ~ TF
+  )) %>% 
+  mutate(TF2 = factor(TF2, levels = c(
+      "GUS", "IDW1", "IDM3", "IDM2", "IDM1", "Combo", "MYC2-ORCA3"
+  ))) %>%  
+  ggplot(aes(x = TF2, y = tpm)) +
+  facet_wrap(~tag, nrow = 4, scales = "free_y") +
+  ggbeeswarm::geom_quasirandom(aes(fill = TF2), color = "white", shape = 21,
+                               size = 3, alpha = 0.8) +
+  stat_summary(geom = "pointrange", fun.data = "mean_se", shape = 4, size = 0.2) +
+  scale_fill_manual(
+    values = c(carto_pal(5, "Vivid")[2], 
+               carto_pal(7, "SunsetDark")[7],
+               carto_pal(7, "Mint")[2:4],
+               carto_pal(7, "BluYl")[7],
+               brewer.pal(8, "Set2")[2])
+  ) +
+  labs(x = "overexpression treatments, OD = 0.1") +
+  theme_classic() +
+  theme(
+    panel.spacing = unit(0.8, "lines"),
+    strip.background = element_blank(),
+    legend.position = "none",
+    axis.text.x = element_text(hjust = 1, angle = 45)
+  )
+
+ggsave("../Results/R_outputs/TF_OE_level.svg", height = 5, width = 4)
+ggsave("../Results/R_outputs/TF_OE_level.png", height = 5, width = 4)
+```
+
+```{r}
+gene_table_long %>% 
+  filter(OD == 0.4) %>% 
+  mutate(gene = substring(target_id, first = 1, last = 13)) %>% 
+  filter(gene %in% c("CRO_03G000120", 
+                      "CRO_04G033370", "CRO_05G006800", "CRO_07G002170"
+                   )) %>%
+  mutate(tag = case_when(
+    gene == "CRO_03G000120" ~ "IDW1",
+    gene == "CRO_04G033370" ~ "IDM2",
+    gene == "CRO_05G006800" ~ "IDM1",
+    gene == "CRO_07G002170" ~ "IDM3"
+  )) %>% 
+  mutate(tag = factor(tag, levels = c(
+     "IDW1", "IDM3", "IDM2", "IDM1"
+  ))) %>%  
+  mutate(TF2 = case_when(
+    str_detect(TF, "MYB1") ~ "IDM1",
+    str_detect(TF, "MYB2") ~ "IDM2",
+    str_detect(TF, "MYB3") ~ "IDM3",
+    str_detect(TF, "WRKY") ~ "IDW1",
+    T ~ TF
+  )) %>% 
+  mutate(TF2 = factor(TF2, levels = c(
+      "GUS", "IDW1", "IDM3", "IDM2", "IDM1"
+  ))) %>%  
+  ggplot(aes(x = TF2, y = tpm)) +
+  facet_wrap(~tag, ncol = 2, scales = "free_y") +
+  ggbeeswarm::geom_quasirandom(aes(fill = TF2), color = "white", shape = 21,
+                               size = 3, alpha = 0.8) +
+  stat_summary(geom = "pointrange", fun.data = "mean_se", shape = 4, size = 0.2) +
+  scale_fill_manual(
+    values = c(carto_pal(5, "Vivid")[2], 
+               carto_pal(7, "SunsetDark")[7],
+               carto_pal(7, "Mint")[2:4]
+               )
+  ) +
+  labs(x = "OE treatment, OD = 0.4") +
+  theme_classic() +
+  theme(
+    panel.spacing = unit(0.8, "lines"),
+    strip.background = element_blank(),
+    legend.position = "none",
+    axis.text.x = element_text(hjust = 1, angle = 45),
+    plot.title = element_text(size = 10)
+  )
+
+ggsave("../Results/R_outputs/TF_OE_level_0.4OD.svg", height = 3.2, width = 4)
+ggsave("../Results/R_outputs/TF_OE_level_0.4OD.png", height = 3.2, width = 4)
+```
+
+
+```{r}
+MIA_genes_heat_data <- MIA_genes %>% 
+  arrange(order2) %>% 
+  left_join(gene_table_long_s, by = "gene") %>% 
+  mutate(tag = reorder(tag, -order2)) %>% 
+  mutate(TF2 = case_when(
+    str_detect(TF, "MYB1") ~ "IDM1",
+    str_detect(TF, "MYB2") ~ "IDM2",
+    str_detect(TF, "MYB3") ~ "IDM3",
+    str_detect(TF, "WRKY") ~ "IDW1",
+    T ~ TF
+  )) %>% 
+   mutate(TF2 = factor(TF2, levels = c(
+      "GUS", "IDW1", "IDM3", "IDM2", "IDM1", "Combo", "MYC2-ORCA3"
+  ))) 
+   
+
+
+head(MIA_genes_heat_data)
+summary(MIA_genes_heat_data$z.score)
+quantile(MIA_genes_heat_data$z.score, c(0.025, 0.25, 0.5, 0.75, 0.9, 0.95, 0.975))
+```
+## Graph 
+```{r}
+MIA_genes_heat_data %>% 
+  mutate(z.clipped = case_when(
+    z.score >= 1.5 ~ 1.5, 
+    z.score <= -1.5 ~ -1.5,
+    T ~ z.score
+  )) %>% 
+  mutate(OD2 = paste0("OD = ", OD)) %>% 
+  ggplot(aes(x = TF2, y = tag)) +
+  facet_grid(.~OD2, scales = "free_x", space = "free_x") +
+  geom_tile(aes(fill = z.clipped)) +
+  scale_fill_gradientn(colors = rev(brewer.pal(11, "RdBu")),
+                       limits = c(-1.5, 1.5),
+                       breaks = c(-1.4, 0, 1.4),
+                       labels = c("<-1.5", "0", ">1.5")) +
+  labs(x = "OE treatments",
+       y = NULL,
+       fill = "z score") +
+  theme_classic() +
+  theme(
+    legend.position = "top",
+    legend.key.height = unit(0.8, "lines"),
+    axis.text.y.left = element_text(hjust = 0.5),
+    axis.text.x.bottom = element_text(angle = 45, hjust = 1),
+    axis.text = element_text(color = "black"),
+    panel.spacing = unit(0.6, "lines"),
+    strip.background = element_rect(fill = NULL, color = NA)
+  )
+
+ggplot2::ggsave("../Results/R_outputs/Pathway_heatmap.svg", height = 8, width = 3.1)
+ggplot2::ggsave("../Results/R_outputs/Pathway_heatmap.png", height = 8, width = 3.1)
+```
+
+# Effect size
+CRO_06G013360 # D4H
+CRO_02G001090 # DAT 
+
+```{r}
+gene_table_long %>% 
+  filter(OD == 0.1) %>% 
+  mutate(gene = substring(target_id, first = 1, last = 13)) %>% 
+  filter(gene %in% c("CRO_06G013360", "CRO_02G001090")) %>% 
+  group_by(gene, TF) %>% 
+  summarise(mean.tpm = mean(tpm)) %>% 
+  pivot_wider(names_from = TF, values_from = mean.tpm) %>% 
+  mutate(FC = MYB1 / GUS)
+```
+
+* 2.8-fold increase from GUS for D4H
+* 1.7-fold increase from GUS for DAT 
+
+```{r}
+gene_table_long %>% 
+  filter(OD == 0.4) %>% 
+  mutate(gene = substring(target_id, first = 1, last = 13)) %>% 
+  filter(gene %in% c("CRO_06G013360", "CRO_02G001090", "CRO_03G003150")) %>% 
+  group_by(gene, TF) %>% 
+  summarise(mean.tpm = mean(tpm)) %>% 
+  pivot_wider(names_from = TF, values_from = mean.tpm) %>% 
+  mutate(FC = MYB1 / GUS)
+```
+* 3.2-fold increase from GUS for D4H
+* 3.9-fold increase from GUS for DAT 
+ 
+# DEseq2 for OD = 0.1 
+ 
+## Make count table 
+```{r}
+count_table <- gene_table_long %>% 
+  filter(OD == 0.1) %>% 
+  mutate(count = as.integer(est_counts)) %>% 
+  dplyr::select(target_id, count, `Sample ID`) %>% 
+  pivot_wider(names_from = `Sample ID`, values_from = count) %>% 
+  as.data.frame()
+
+row.names(count_table) <- count_table$target_id
+head(count_table)
+```
+## Construct DESeqDataSet object 
+```{r}
+metadata1.2 <- metadata1 %>% 
+  mutate(TF2 = case_when(
+    str_detect(TF, "MYB1") ~ "IDM1",
+    str_detect(TF, "MYB2") ~ "IDM2",
+    str_detect(TF, "MYB3") ~ "IDM3",
+    str_detect(TF, "WRKY") ~ "IDW1",
+    T ~ TF
+  )) %>% 
+  mutate(TF2 = str_replace_all(TF2, "-", "_")) %>% 
+  mutate(TF3 = factor(TF2, levels = c(
+     "GUS", "IDW1", "IDM3", "IDM2", "IDM1", "Combo", "MYC2_ORCA3"
+  )))
+  # DESeq2 does not want "-" in factor levels. 
+
+metadata1.2
+```
+
+```{r}
+dds <- DESeqDataSetFromMatrix(
+  countData = count_table[,-1],
+  colData = metadata1.2,
+  design = ~TF3, tidy = F
+)
+
+dds
+```
+
+## Run DEseq 
+```{r}
+dds <- DESeq(dds)
+```
+
+## DESeq2 results
+### Myb1 
+```{r}
+myb1_results <- results(dds, contrast = c("TF3", "IDM1", "GUS"))
+myb1_results
+```
+```{r}
+myb1_DE <- myb1_results %>% 
+  as.data.frame() %>% 
+  filter(padj < 0.05) %>% 
+  filter(log2FoldChange > 0) %>% 
+  mutate(gene_ID = row.names(.)) %>% 
+  mutate(gene_ID2 = str_replace_all(gene_ID, "_", "-")) %>% 
+  arrange(log2FoldChange) %>% 
+  left_join(CRO_funct_anno, by = c("gene_ID" = "X1"))
+
+myb1_DE
+```
+
+
+### Mean separation plots 
+```{r}
+myb1_DE %>% 
+  left_join(gene_table_long %>% 
+              filter(OD == 0.1), by = c("gene_ID" = "target_id")) %>% 
+  mutate(TF2 = case_when(
+    str_detect(TF, "MYB1") ~ "IDM1",
+    str_detect(TF, "MYB2") ~ "IDM2",
+    str_detect(TF, "MYB3") ~ "IDM3",
+    str_detect(TF, "WRKY") ~ "IDW1",
+    T ~ TF
+  )) %>% 
+   mutate(TF2 = factor(TF2, levels = c(
+      "GUS", "IDW1", "IDM3", "IDM2", "IDM1", "Combo", "MYC2-ORCA3"
+  ))) %>% 
+  mutate(gene_ID = reorder(gene_ID, log2FoldChange)) %>% 
+  ggplot(aes(x = TF2, y = tpm)) +
+  facet_wrap(~gene_ID, scales = "free_y", nrow = 2) +
+  ggbeeswarm::geom_quasirandom(aes(fill = TF2), color = "white", shape = 21,
+                               size = 3, alpha = 0.8) +
+  stat_summary(fun.data = "mean_se", geom = "linerange") +
+  scale_fill_manual(
+    values = c(carto_pal(5, "Vivid")[2], 
+               carto_pal(7, "SunsetDark")[7],
+               carto_pal(7, "Mint")[2:4],
+               carto_pal(7, "BluYl")[7],
+               brewer.pal(8, "Set2")[2]), 
+  ) +
+  labs(x = "OE treatments") +
+  theme_classic() +
+  theme(
+    axis.text = element_text(color = "black"),
+    axis.text.x = element_text(hjust = 1, angle = 45),
+    legend.position = "none"
+  )
+
+ggsave("../Results/R_outputs/MYB1_DE_up_jitter.svg", height = 3, width = 7)
+ggsave("../Results/R_outputs/MYB1_DE_up_jitter.png", height = 3, width = 7)
+```
+
+### MYC2_ORC3
+```{r}
+pos_control_results <- results(dds, contrast = c("TF3", "MYC2_ORCA3", "GUS"))
+pos_control_results
+```
+```{r}
+myc2_orca3_DE <- pos_control_results %>% 
+  as.data.frame() %>% 
+  filter(padj < 0.05) %>% 
+  filter(log2FoldChange > 0) %>% 
+  mutate(gene_ID = row.names(.)) %>% 
+  mutate(gene_ID2 = str_replace_all(gene_ID, "_", "-")) %>% 
+  arrange(log2FoldChange) %>% 
+  left_join(CRO_funct_anno, by = c("gene_ID" = "X1"))
+
+myc2_orca3_DE
+```
+
+```{r}
+pos_control_results %>% 
+  as.data.frame() %>% 
+  mutate(gene_ID = row.names(.)) %>% 
+  filter(str_detect(gene_ID, "03G000120|04G033370|05G006800|07G002170"))
+```
+
+
+# DEseq2 for OD 0.4
+## Make count table 
+```{r}
+count_table_0.4 <- gene_table_long %>% 
+  filter(OD == 0.4) %>% 
+  mutate(count = as.integer(est_counts)) %>% 
+  dplyr::select(target_id, count, `Sample ID`) %>% 
+  pivot_wider(names_from = `Sample ID`, values_from = count) %>% 
+  as.data.frame()
+
+row.names(count_table_0.4) <- count_table_0.4$target_id
+head(count_table_0.4)
+```
+
+## Construct DESeqDataSet object 
+```{r}
+metadata2_3 <- metadata2 %>%
+  rbind(metadata3) %>% 
+   mutate(TF2 = case_when(
+    str_detect(TF, "MYB1") ~ "IDM1",
+    str_detect(TF, "MYB2") ~ "IDM2",
+    str_detect(TF, "MYB3") ~ "IDM3",
+    str_detect(TF, "WRKY") ~ "IDW1",
+    T ~ TF
+  )) %>% 
+  mutate(TF2 = str_replace_all(TF2, "-", "_")) %>% 
+  mutate(TF3 = factor(TF2, levels = c(
+    "GUS",  "IDW1", "IDM3", "IDM2", "IDM1" 
+  )))
+  # DESeq2 does not want "-" in factor levels. 
+
+metadata2_3
+```
+```{r}
+dds_0.4 <- DESeqDataSetFromMatrix(
+  countData = count_table_0.4[,-1],
+  colData = metadata2_3,
+  design = ~TF3, tidy = F
+)
+
+dds_0.4
+```
+
+## Run DEseq 
+```{r}
+dds_0.4 <- DESeq(dds_0.4)
+```
+# DEseq2 results 0.4 
+### MYB1 
+```{r}
+myb1_results_0.4 <- results(dds_0.4, contrast = c("TF3", "IDM1", "GUS"))
+myb1_results_0.4
+```
+
+```{r}
+myb1_DE_0.4 <- myb1_results_0.4 %>% 
+  as.data.frame() %>% 
+  filter(padj < 0.05) %>% 
+  filter(log2FoldChange > 0) %>% 
+  mutate(gene_ID = row.names(.)) %>% 
+  mutate(gene_ID2 = str_replace_all(gene_ID, "_", "-")) %>% 
+  arrange(-log2FoldChange) %>% 
+  left_join(CRO_funct_anno, by = c("gene_ID" = "X1"))
+
+myb1_DE_0.4
+```
+```{r}
+myb1_DE_0.4 %>% 
+  filter(str_detect(gene_ID, "06G013360|02G001090"))
+```
+### Mean separation plots 
+```{r}
+myb1_DE_0.4 %>% 
+  filter(str_detect(gene_ID, "06G013360|02G001090")) %>% 
+  left_join(gene_table_long %>% 
+              filter(OD == 0.4), by = c("gene_ID" = "target_id")) %>% 
+   mutate(TF2 = case_when(
+    str_detect(TF, "MYB1") ~ "IDM1",
+    str_detect(TF, "MYB2") ~ "IDM2",
+    str_detect(TF, "MYB3") ~ "IDM3",
+    str_detect(TF, "WRKY") ~ "IDW1",
+    T ~ TF
+  )) %>% 
+  mutate(TF2 = factor(TF2, levels = c(
+    "GUS", "IDW1", "IDM3", "IDM2","IDM1"
+  ))) %>% 
+  mutate(tag = case_when(
+    str_detect(gene_ID, "06G013360") ~ "D4H",
+    str_detect(gene_ID, "02G001090") ~ "DAT"
+  )) %>% 
+  ggplot(aes(x = TF2, y = tpm)) +
+  facet_wrap(~tag, scales = "free_y", nrow = 1) +
+  ggbeeswarm::geom_quasirandom(aes(fill = TF2), color = "white", shape = 21,
+                               size = 3, alpha = 0.8) +
+  stat_summary(fun.data = "mean_se", geom = "pointrange", shape = 4, size = 0.4) +
+  scale_fill_manual(
+    values = c(carto_pal(5, "Vivid")[2], 
+               carto_pal(7, "SunsetDark")[7],
+               carto_pal(7, "Mint")[2:4],
+               carto_pal(7, "BluYl")[7],
+               brewer.pal(8, "Set2")[2])
+               ) +
+  labs(x = "OE treatments OD = 0.4") + 
+  theme_classic() +
+  theme(
+    axis.text = element_text(color = "black"),
+    axis.text.x = element_text(hjust = 1, angle = 45),
+    legend.position = "none",
+    panel.spacing = unit(0.8, "lines")
+  )
+
+ggsave("../Results/R_outputs/MYB1_DE_up_jitter2.svg", height = 2, width = 3)
+ggsave("../Results/R_outputs/MYB1_DE_up_jitter2.png", height = 2, width = 3)
+```
+```{r}
+myb1_DE_0.4 %>% 
+  filter(gene_ID %in% myb1_DE$gene_ID) %>% 
+  left_join(gene_table_long %>% 
+              filter(OD == 0.4), by = c("gene_ID" = "target_id")) %>% 
+  mutate(TF2 = case_when(
+    str_detect(TF, "MYB1") ~ "IDM1",
+    str_detect(TF, "MYB2") ~ "IDM2",
+    str_detect(TF, "MYB3") ~ "IDM3",
+    str_detect(TF, "WRKY") ~ "IDW1",
+    T ~ TF
+  )) %>% 
+  mutate(TF2 = factor(TF2, levels = c(
+      "GUS", "IDW1", "IDM3", "IDM2","IDM1"
+  ))) %>% 
+  mutate(gene_ID = reorder(gene_ID, log2FoldChange)) %>% 
+  ggplot(aes(x = TF2, y = tpm)) +
+  facet_wrap(~gene_ID, scales = "free_y", nrow = 2) +
+  ggbeeswarm::geom_quasirandom(aes(fill = TF2), color = "white", shape = 21,
+                               size = 3, alpha = 0.8) +
+  stat_summary(fun.data = "mean_se", geom = "pointrange", size = 0.2, shape = 4) +
+  scale_fill_manual(
+     values = c(carto_pal(5, "Vivid")[2], 
+               carto_pal(7, "SunsetDark")[7],
+               carto_pal(7, "Mint")[2:4],
+               carto_pal(7, "BluYl")[7],
+               brewer.pal(8, "Set2")[2])
+               ) +
+  labs(x = "OE treatments, OD = 0.4") +
+  theme_classic() +
+  theme(
+    axis.text = element_text(color = "black"),
+    axis.text.x = element_text(hjust = 1, angle = 45),
+    legend.position = "none",
+    panel.spacing = unit(0.8, "lines")
+  )
+
+ggsave("../Results/R_outputs/MYB1_DE_up_jitter3.svg", height = 3, width = 7)
+ggsave("../Results/R_outputs/MYB1_DE_up_jitter3.png", height = 3, width = 7)
+```
+
+### MYB2 
+```{r}
+myb2_results_0.4 <- results(dds_0.4, contrast = c("TF3", "IDM2", "GUS"))
+myb2_results_0.4
+```
+```{r}
+myb2_DE_0.4 <- myb2_results_0.4 %>% 
+  as.data.frame() %>% 
+  filter(padj < 0.05) %>% 
+  filter(log2FoldChange > 0) %>% 
+  mutate(gene_ID = row.names(.)) %>% 
+  mutate(gene_ID2 = str_replace_all(gene_ID, "_", "-")) %>% 
+  arrange(-log2FoldChange) %>% 
+  left_join(CRO_funct_anno, by = c("gene_ID" = "X1"))
+
+myb2_DE_0.4
+```
+
+```{r}
+myb2_DE_0.4 %>% 
+  filter(str_detect(gene_ID, "06G013360|02G001090|03G000120|04G033370|05G006800|07G002170"))
+```
+```{r}
+myb2_dot <- DotPlot(CRO_RNA, features = myb2_DE_0.4$gene_ID2)$data 
+```
+```{r}
+myb2_dot_0.4_peak_exp <- myb2_dot %>% 
+  group_by(features.plot) %>% 
+  slice_max(n = 1, order_by = avg.exp.scaled) %>% 
+  dplyr::select(features.plot, id)  %>% 
+  mutate(order_y = as.numeric(id)) %>% 
+  dplyr::rename(peak_cluster = id)  
+  
+
+myb2_dot_0.4_peak_exp
+
+```
+```{r}
+myb2_up_heat_0.4 <- myb2_dot %>% 
+  left_join(myb2_dot_0.4_peak_exp, by = "features.plot") %>% 
+  mutate(features.plot = reorder(features.plot, -order_y)) %>% 
+  ggplot(aes(x = id, y = features.plot)) +
+  geom_tile(aes(fill = avg.exp.scaled)) +
+  scale_fill_gradientn(colors = brewer.pal(9, "YlGnBu")) +
+  labs(x = "Cluster",
+       y = "Genes",
+       fill = "Avg. Exp.",
+       title = "IDM2 (OD 0.4) DE up genes") + 
+  theme_classic() +
+  theme(axis.text.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.text = element_text(color = "black"),
+        legend.position = "top")
+
+wrap_plots(myb2_up_heat_0.4, Leaf_cell_type_strip,
+           nrow = 2, heights = c(1, 0.05))
+```
+### MYB3 
+```{r}
+myb3_results_0.4 <- results(dds_0.4, contrast = c("TF3", "IDM3", "GUS"))
+myb3_results_0.4
+
+myb3_DE_0.4 <- myb3_results_0.4 %>% 
+  as.data.frame() %>% 
+  filter(padj < 0.05) %>% 
+  filter(log2FoldChange > 0) %>% 
+  mutate(gene_ID = row.names(.)) %>% 
+  mutate(gene_ID2 = str_replace_all(gene_ID, "_", "-")) %>% 
+  arrange(-log2FoldChange) %>% 
+  left_join(CRO_funct_anno, by = c("gene_ID" = "X1"))
+
+myb3_DE_0.4
+```
+
+```{r}
+myb3_dot_0.4 <- DotPlot(CRO_RNA, features = myb3_DE_0.4$gene_ID2)$data 
+```
+
+```{r}
+myb3_dot_0.4_peak_exp <- myb3_dot_0.4 %>% 
+  group_by(features.plot) %>% 
+  slice_max(n = 1, order_by = avg.exp.scaled) %>% 
+  dplyr::select(features.plot, id)  %>% 
+  mutate(order_y = as.numeric(id)) %>% 
+  dplyr::rename(peak_cluster = id)  
+  
+
+myb3_dot_0.4_peak_exp
+```
+```{r}
+myb3_up_heat_0.4 <- myb3_dot_0.4 %>% 
+  left_join(myb3_dot_0.4_peak_exp, by = "features.plot") %>% 
+  mutate(features.plot = reorder(features.plot, -order_y)) %>% 
+  ggplot(aes(x = id, y = features.plot)) +
+  geom_tile(aes(fill = avg.exp.scaled)) +
+  scale_fill_gradientn(colors = brewer.pal(9, "YlGnBu")) +
+  labs(x = "Cluster",
+       y = "Genes",
+       fill = "Avg. Exp.",
+       title = "IDM3 (OD 0.4) DE up genes") + 
+  theme_classic() +
+  theme(axis.text.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.text = element_text(color = "black"),
+        legend.position = "top")
+
+wrap_plots(myb3_up_heat_0.4, Leaf_cell_type_strip,
+           nrow = 2, heights = c(1, 0.05))
+```
+### WRKY1
+```{r}
+wrky_results_0.4 <- results(dds_0.4, contrast = c("TF3", "IDW1", "GUS"))
+wrky_results_0.4
+```
+```{r}
+wrky_DE_0.4 <- wrky_results_0.4 %>% 
+  as.data.frame() %>% 
+  filter(padj < 0.05) %>% 
+  filter(log2FoldChange > 0) %>% 
+  mutate(gene_ID = row.names(.)) %>% 
+  mutate(gene_ID2 = str_replace_all(gene_ID, "_", "-")) %>% 
+  arrange(-log2FoldChange) %>% 
+  left_join(CRO_funct_anno, by = c("gene_ID" = "X1"))
+
+wrky_DE_0.4
+```
+```{r}
+wrky_dot_0.4 <- DotPlot(CRO_RNA, features = wrky_DE_0.4$gene_ID2)$data 
+wrky_dot_0.4_peak_exp <- wrky_dot_0.4 %>% 
+  group_by(features.plot) %>% 
+  slice_max(n = 1, order_by = avg.exp.scaled) %>% 
+  dplyr::select(features.plot, id)  %>% 
+  mutate(order_y = as.numeric(id)) %>% 
+  dplyr::rename(peak_cluster = id)  
+  
+
+wrky_dot_0.4_peak_exp
+```
+
+```{r}
+wrky_up_heat_0.4 <- wrky_dot_0.4 %>% 
+  left_join(wrky_dot_0.4_peak_exp, by = "features.plot") %>% 
+  mutate(features.plot = reorder(features.plot, -order_y)) %>% 
+  ggplot(aes(x = id, y = features.plot)) +
+  geom_tile(aes(fill = avg.exp.scaled)) +
+  scale_fill_gradientn(colors = brewer.pal(9, "YlGnBu")) +
+  labs(x = "Cluster",
+       y = "Genes",
+       fill = "Avg. Exp.",
+       title = "IDW1 (OD 0.4) DE up genes") + 
+  theme_classic() +
+  theme(axis.text.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.text = element_text(color = "black"),
+        legend.position = "top")
+
+wrap_plots(wrky_up_heat_0.4, Leaf_cell_type_strip,
+           nrow = 2, heights = c(1, 0.05))
+```
+
+
+
+## Myb 1
+```{r}
+myb1_dot <- DotPlot(CRO_RNA, features = myb1_DE$gene_ID2)$data 
+```
+```{r}
+myb1_dot_peak_exp <- myb1_dot %>% 
+  group_by(features.plot) %>% 
+  slice_max(n = 1, order_by = avg.exp.scaled) %>% 
+  dplyr::select(features.plot, id)  %>% 
+  mutate(order_y = as.numeric(id)) %>% 
+  dplyr::rename(peak_cluster = id)  
+  
+
+myb1_dot_peak_exp
+```
+```{r}
+myb1_dot_heat <- myb1_dot %>% 
+  left_join(myb1_dot_peak_exp, by = "features.plot") %>% 
+  mutate(features.plot = reorder(features.plot, -order_y)) %>% 
+   mutate(pct.exp_clip = case_when(
+    pct.exp >= 20 ~ 20,
+    T ~ pct.exp
+  )) %>%
+  ggplot(aes(x = id, y = features.plot)) +
+  geom_point(aes(size = pct.exp_clip, fill = avg.exp.scaled), shape = 21, color = "white") +
+  #geom_tile(aes(fill = avg.exp.scaled)) +
+  scale_fill_gradientn(colors = brewer.pal(9, "YlGnBu")) +
+  guides(size = guide_legend(override.aes = list(fill = "grey40"))) +
+  labs(x = "Cluster",
+       y = NULL, 
+       fill = "Avg. Exp.",
+       size = "% Exp.",
+       title = "IDM1 (OD 0.1) DE up genes ") +
+  theme_classic() +
+  theme(axis.text = element_text(color = "black"),
+        title = element_text(size = 10)) 
+
+wrap_plots(myb1_dot_heat, Leaf_cell_type_strip,
+           nrow = 2, heights = c(1, 0.05))
+
+ggsave("../Results/R_outputs/MYB1_DE_up.svg", height = 4, width = 6)
+ggsave("../Results/R_outputs/MYB1_DE_up.png", height = 4, width = 6)
+```
+
+## ORCA
+```{r}
+ORCA_dot <- DotPlot(CRO_RNA, features = myc2_orca3_DE$gene_ID2)$data 
+```
+```{r}
+ORCA_dot_peak_exp <- ORCA_dot %>% 
+  group_by(features.plot) %>% 
+  slice_max(n = 1, order_by = avg.exp.scaled) %>% 
+  dplyr::select(features.plot, id)  %>% 
+  mutate(order_y = as.numeric(id)) %>% 
+  dplyr::rename(peak_cluster = id)  
+  
+
+ORCA_dot_peak_exp
+```
+```{r}
+ORCA_up_heat <- ORCA_dot %>% 
+  left_join(ORCA_dot_peak_exp, by = "features.plot") %>% 
+  mutate(features.plot = reorder(features.plot, -order_y)) %>% 
+  ggplot(aes(x = id, y = features.plot)) +
+  geom_tile(aes(fill = avg.exp.scaled)) +
+  scale_fill_gradientn(colors = brewer.pal(9, "YlGnBu")) +
+  labs(x = "Cluster",
+       y = "Genes",
+       fill = "Avg. Exp.",
+       title = "MYC2 ORCA3 DE up genes") + 
+  theme_classic() +
+  theme(axis.text.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.text = element_text(color = "black"),
+        legend.position = "top")
+
+wrap_plots(ORCA_up_heat, Leaf_cell_type_strip,
+           nrow = 2, heights = c(1, 0.05))
+
+ggsave("../Results/R_outputs/MYC2_ORCA3_DE_up.svg", height = 4, width = 6)
+ggsave("../Results/R_outputs/MYC2_ORCA3_DE_up.png", height = 4, width = 6)
+```
+
+## Myb1, O.D. 0.4
+```{r}
+myb1_dot_0.4 <- DotPlot(CRO_RNA, features = myb1_DE_0.4$gene_ID2)$data 
+```
+```{r}
+myb1_dot_0.4_peak_exp <- myb1_dot_0.4 %>% 
+  group_by(features.plot) %>% 
+  slice_max(n = 1, order_by = avg.exp.scaled) %>% 
+  dplyr::select(features.plot, id)  %>% 
+  mutate(order_y = as.numeric(id)) %>% 
+  dplyr::rename(peak_cluster = id)  
+  
+
+myb1_dot_0.4_peak_exp
+```
+```{r}
+myb1_up_heat_0.4 <- myb1_dot_0.4 %>% 
+  left_join(myb1_dot_0.4_peak_exp, by = "features.plot") %>% 
+  mutate(features.plot = reorder(features.plot, -order_y)) %>% 
+  ggplot(aes(x = id, y = features.plot)) +
+  geom_tile(aes(fill = avg.exp.scaled)) +
+  scale_fill_gradientn(colors = brewer.pal(9, "YlGnBu")) +
+  labs(x = "Cluster",
+       y = "Genes",
+       fill = "Avg. Exp.",
+       title = "IDM1 (OD 0.4) DE up genes") + 
+  theme_classic() +
+  theme(axis.text.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.text = element_text(color = "black"),
+        legend.position = "top")
+
+wrap_plots(myb1_up_heat_0.4, Leaf_cell_type_strip,
+           nrow = 2, heights = c(1, 0.05))
+
+ggsave("../Results/R_outputs/MYB1_0.4_DE_up.svg", height = 4, width = 6)
+ggsave("../Results/R_outputs/MYB1_0.4_DE_up.png", height = 4, width = 6)
+```
+
+## Random genes 
+```{r}
+random_genes <- sample(row.names(CRO_RNA), size = nrow(myb1_dot_0.4_peak_exp), replace = F)
+random_gene_dot <- DotPlot(CRO_RNA, features = random_genes)$data 
+
+random_dot_peak_exp <- random_gene_dot %>% 
+  group_by(features.plot) %>% 
+  slice_max(n = 1, order_by = avg.exp.scaled) %>% 
+  dplyr::select(features.plot, id)  %>% 
+  mutate(order_y = as.numeric(id)) %>% 
+  dplyr::rename(peak_cluster = id) 
+```
+
+ 
+# Calculate odds ratio for idioblast expressed genes 
+## Out of all expressed genes, how many of them peaked in idioblast? 
+```{r}
+All_average <- AverageExpression(object = CRO_RNA, assays = "RNA", slot = "data")$RNA %>% 
+  as.data.frame()
+
+All_average_peak <- All_average %>% 
+  mutate(gene_ID = row.names(.)) %>% 
+  pivot_longer(cols = !gene_ID, names_to = "cluster", values_to  = "expression") %>% 
+  group_by(gene_ID) %>% 
+  slice_max(n = 1, order_by = expression) %>% 
+  ungroup()
+
+head(All_average_peak)
+```
+```{r}
+All_idioblast <- All_average_peak %>% 
+  filter(cluster == "8") %>% 
+  nrow()
+
+All_expressed <- nrow(All_average_peak)
+
+All_idioblast
+All_expressed
+
+exp.p <- All_idioblast/All_expressed
+exp.q <- 1-exp.p
+
+exp.p
+exp.q
+```
+## Set up test for ORCA 
+```{r}
+O_and_I <- ORCA_dot_peak_exp %>% 
+  filter(peak_cluster == 8) %>% 
+  nrow()
+
+O_DE <- nrow(ORCA_dot_peak_exp)
+
+O_and_I
+O_DE
+
+O_and_I / O_DE
+
+chisq.test(
+  c(O_and_I, O_DE - O_and_I), p = c(exp.p, exp.q)
+)
+```
+
+* idioblast = 190
+* all = 3378 
+* ratio = 190/3368 = 0.056 = 5.6% 
+
+ 
+## Set up test for MYB1 
+```{r}
+M_and_I <- myb1_dot_0.4_peak_exp %>% 
+  filter(peak_cluster == 8) %>% 
+  nrow()
+
+M_DE <- nrow(myb1_dot_0.4_peak_exp)
+
+M_and_I
+M_DE
+
+M_and_I / M_DE
+
+chisq.test(
+  c(M_and_I, M_DE - M_and_I), p = c(exp.p, exp.q)
+)
+```
+
+* idioblast = 137
+* all = 1057 
+* ratio = 137/1057 = 0.13 = 13% 
+
+## Make a graph 
+```{r}
+Idioblast_peak_proportions <- data.frame(
+  Gene_sets = c("Expressed genes", "MYC2-ORCA3 DE up", "IDM1 DE up"),
+  I = c(All_idioblast, O_and_I, M_and_I),
+  Total = c(All_expressed, O_DE, M_DE)
+) %>% 
+  mutate(`highest expressed at idioblast` = I/Total * 100) %>% 
+  mutate(other = 100 - `highest expressed at idioblast`)
+
+Idioblast_peak_proportions
+```
+```{r}
+Idioblast_peak_proportions %>% 
+  #pivot_longer(cols = c(`highest expressed at idioblast`,
+  #                      other), names_to = "genes", values_to = "% genes") %>% 
+  mutate(Gene_sets = factor(Gene_sets, levels = c(
+    "Expressed genes", "MYC2-ORCA3 DE up", "IDM1 DE up"
+  ))) %>% 
+  ggplot(aes(x = Gene_sets, y = `highest expressed at idioblast`)) +
+  geom_bar(stat = "identity", aes(fill = Gene_sets), 
+           color = "white", alpha = 0.8, width = 0.7) +
+  geom_text(aes(label = paste0(I,"/", Total)), hjust = 0, y = 0) +
+  scale_fill_manual(values = c("grey80",
+                               #brewer.pal(8, "Set2")[2],
+                               "grey60",
+                               carto_pal(7, "Mint")[4]),
+                    limits = c("Expressed genes", "MYC2-ORCA3 DE up", "IDM1 DE up")) +
+  labs(x = "gene sets",
+       y = "% highest expression in idioblast",
+       fill = NULL) +
+  theme_classic() +
+  theme(
+    legend.position = "none",
+    axis.text.y = element_text(hjust = 0.5, color = "black")
+    ) +
+  coord_flip()
+
+ggsave("../Results/R_outputs/Idioblast_peak_proportions.svg", height = 2.25, width = 3.8)
+ggsave("../Results/R_outputs/Idioblast_peak_proportions.png", height = 2.25, width = 3.8)
+```
+
+ 
+# Make graphs for transporters, P450, laccase, 2-OG, and ADHs 
+```{r}
+CRO_funct_anno %>% 
+  filter(str_detect(X2, "multidrug"))
+```
+
+```{r}
+CRO_funct_anno2 <- CRO_funct_anno %>% 
+  mutate(class = case_when(
+    str_detect(X2, "P450") &
+      str_detect(X2, "P450 reductase") == F ~ "P450",
+    str_detect(X2, "elicit|cinnamyl alcohol dehydrogenase|GroES") ~ "ADH",
+    str_detect(X2, "2OG") ~ "2-OG",
+    str_detect(X2, "MATE|purine perm|Major fac|tonoplast|ABC|multidrug") ~ "transporter" 
+  ))
+```
+
+```{r}
+gene_families_expressed <- CRO_funct_anno2 %>% 
+  mutate(X1 = str_replace(X1, "_", "-")) %>% 
+  filter(X1 %in% row.names(CRO_RNA)) %>% 
+  filter(is.na(class) == F) %>% 
+  #mutate(all_expressed_genes = nrow(CRO_RNA)) %>% 
+  mutate(gene_set = "Expressed genes")  
+  
+
+gene_fam_myb1_DE_0.4 <- CRO_funct_anno2 %>% 
+  mutate(X1 = str_replace(X1, "_", "-")) %>% 
+  filter(X1 %in% myb1_dot_0.4_peak_exp$features.plot) %>% 
+  filter(is.na(class) == F) %>% 
+  mutate(gene_set = "IDM1 DE up")
+
+gene_fam_myc_orca_DE_0.4 <- CRO_funct_anno2 %>% 
+  mutate(X1 = str_replace(X1, "_", "-")) %>% 
+  filter(X1 %in% ORCA_dot_peak_exp$features.plot) %>% 
+  filter(is.na(class) == F) %>% 
+  mutate(gene_set = "MYC2-ORCA3 DE up")
+```
+
+```{r}
+gene_fam_summary <- rbind(
+    gene_families_expressed,
+    gene_fam_myb1_DE_0.4,
+    gene_fam_myc_orca_DE_0.4
+) %>% 
+  group_by(gene_set, class) %>% 
+  dplyr::count() %>% 
+  ungroup() %>% 
+  mutate(all_genes = case_when(
+    gene_set == "Expressed genes" ~ nrow(CRO_RNA),
+    gene_set == "IDM1 DE up" ~ nrow(myb1_dot_0.4_peak_exp),
+    gene_set == "MYC2-ORCA3 DE up" ~ nrow(ORCA_dot_peak_exp)
+  )) %>% 
+  mutate(percent = n/all_genes * 100) %>% 
+  mutate(gene_set = factor(gene_set, levels = c(
+    "Expressed genes", "MYC2-ORCA3 DE up", "IDM1 DE up"
+  )))
+
+gene_fam_summary
+```
+
+## Summary of % interested gene families in gene sets 
+```{r}
+gene_fam_summary_bar <- gene_fam_summary %>% 
+  ggplot(aes(x = gene_set, y = percent)) +
+  facet_grid(class ~ ., scales = "free", switch = "y") +
+  geom_bar(stat = "identity", aes(fill = gene_set), width = 0.7, alpha = 0.8) +
+   scale_fill_manual(values = c("grey80",
+                               #brewer.pal(8, "Set2")[2],
+                               "grey60",
+                               carto_pal(7, "Mint")[4]),
+                    limits = c("Expressed genes", "MYC2-ORCA3 DE up", "IDM1 DE up")) +
+  labs(y = "% genes",
+       x = "gene family",
+       fill = "gene set") +
+  theme_classic() +
+  theme(legend.position = c(0.78, 0.88),
+        axis.text.y.left = element_blank(),
+        axis.text = element_text(color = "black"),
+        strip.placement = "outside",
+        axis.ticks.y = element_blank(),
+        strip.background = element_blank(),
+        strip.text.y = element_text(size = 12),
+        panel.spacing = unit(0.5, "lines")
+        ) +
+  coord_flip()
+
+gene_fam_summary_bar
+ggsave("../Results/R_outputs/gen_fam_summary.svg", height = 4.2, width = 4)
+ggsave("../Results/R_outputs/gen_fam_summary.png", height = 4.2, width = 4)
+```
+
+## Interesting gene fams expression pattern at single cell? 
+```{r}
+gene_fam_myb1_dot_data <- DotPlot(CRO_RNA, features = gene_fam_myb1_DE_0.4$X1)$data 
+
+gene_fam_myb1_dot_peak_exp <- gene_fam_myb1_dot_data %>% 
+  group_by(features.plot) %>% 
+  slice_max(n = 1, order_by = avg.exp.scaled) %>% 
+  dplyr::select(features.plot, id)  %>% 
+  mutate(order_y = as.numeric(id)) %>% 
+  dplyr::rename(peak_cluster = id)  
+  
+#gene_fam_myb1_dot_peak_exp  
+head(gene_fam_myb1_dot_data)
+```
+```{r}
+myb1_up_gene_fam_heat_0.4 <- gene_fam_myb1_dot_data %>% 
+  left_join(gene_fam_myb1_dot_peak_exp, by = "features.plot") %>% 
+  mutate(features.plot = reorder(features.plot, -order_y)) %>% 
+  
+  ggplot(aes(x = id, y = features.plot)) +
+  # geom_tile(aes(fill = avg.exp.scaled)) +
+  geom_point(shape = 21, aes(fill = avg.exp.scaled, size = pct.exp), 
+             color = "white") +
+  #scale_fill_gradientn(colors = brewer.pal(9, "YlGnBu")) +
+  scale_fill_viridis(option = "A", begin = 0, end = 0.9) +
+  scale_size(breaks = c(25, 50, 75)) +
+  guides(size = guide_legend(override.aes = list(fill = "grey40"))) +
+  labs(x = "Cluster",
+       y = "IDM1 metabolic regulon",
+       fill = "Avg. Exp.",
+       size = "% Exp.") + 
+  theme_classic() +
+  theme(axis.text.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.text = element_text(color = "black"),
+        legend.position = "top",
+        legend.box = "vertical",
+        legend.key.height = unit(0.7, "lines"))
+
+myb1_up_gene_fam_heat_0.4_strip <- wrap_plots(myb1_up_gene_fam_heat_0.4, 
+           Leaf_cell_type_strip +
+             guides(fill = guide_legend(ncol = 2, title.position = "top")),
+           nrow = 2, heights = c(1, 0.02))
+
+myb1_up_gene_fam_heat_0.4_strip
+
+ggsave("../Results/R_outputs/MYB1_0.4_DE_up_gen_fam.svg", height = 8, width = 3.5)
+ggsave("../Results/R_outputs/MYB1_0.4_DE_up_gen_fam.png", height = 8, width = 3.5)
+```
+
+## Write supp. table for MYB1 metabolic regulon 
+```{r}
+gene_fam_myb1_DE_0.4 %>% 
+  left_join(gene_fam_myb1_dot_peak_exp, by = c("X1"="features.plot")) %>% 
+  left_join(leaf_cell_type_assignment, by = c("peak_cluster"="cluster")) %>% 
+  left_join(myb1_DE_0.4, by = c("X1"="gene_ID2")) %>% 
+  dplyr::select(X1, class, X2.x, peak_cluster, cell_type, log2FoldChange, padj) %>% 
+  arrange(peak_cluster) %>% 
+  write_excel_csv("../Results/R_outputs/IDM1_metabolic_regulon.csv")
+```
+
+## Mean separation of select examples, one per category 
+```{r}
+example_genes <- myb1_DE_0.4 %>% 
+  inner_join(gene_fam_myb1_dot_peak_exp, by = c("gene_ID2"="features.plot")) %>% 
+  left_join(gene_table_long %>% 
+              filter(OD == 0.4), by = c("gene_ID" = "target_id")) %>% 
+  filter(peak_cluster ==8 ) %>% 
+  mutate(TF2 = case_when(
+    str_detect(TF, "MYB1") ~ "IDM1",
+    str_detect(TF, "MYB2") ~ "IDM2",
+    str_detect(TF, "MYB3") ~ "IDM3",
+    str_detect(TF, "WRKY") ~ "IDW1",
+    T ~ TF
+  )) %>% 
+  mutate(TF2 = factor(TF2, levels = c(
+    "GUS", "IDM1"
+  ))) %>% 
+  mutate(gene_ID = reorder(gene_ID, log2FoldChange))  
+
+head(example_genes)
+```
+
+
+```{r}
+example_genes_jitter <- example_genes %>% 
+  filter(gene_ID2 %in% c("CRO-04G027110.1", "CRO-02G027670.2", "CRO-01G017430.4", "CRO-01G030300.1")) %>% 
+  mutate(class = case_when(
+    str_detect(gene_ID2, "04G027110.1") ~ "P450",
+    str_detect(gene_ID2, "02G027670.2") ~ "MATE",
+    str_detect(gene_ID2, "01G017430.4") ~ "ADH",
+    str_detect(gene_ID2, "01G030300.1") ~ "2-OG"
+  )) %>% 
+  mutate(tag = paste0(
+    str_remove_all(gene_ID2, "CRO-|\\.\\d+"), "\n", class
+  )) %>% 
+  ggplot(aes(x = TF2, y = tpm)) +
+  facet_wrap(~tag, scales = "free_y", ncol = 2) +
+  ggbeeswarm::geom_quasirandom(aes(fill = TF2), color = "white", shape = 21,
+                               size = 3, alpha = 0.8) +
+  stat_summary(fun.data = "mean_se", geom = "linerange") +
+  scale_fill_manual(
+    values = c(carto_pal(5, "Vivid")[2], 
+               #carto_pal(7, "SunsetDark")[7],
+               carto_pal(7, "Mint")[4]
+               #carto_pal(7, "BluYl")[7],
+               #brewer.pal(8, "Set2")[2]
+               )
+  ) +
+  labs(x = "OE treatments") +
+  theme_classic() +
+  theme(
+    axis.text = element_text(color = "black"),
+    axis.text.x = element_text(hjust = 1, angle = 45),
+    legend.position = "none",
+    panel.spacing = unit(0.8, "lines")
+  )
+
+example_genes_jitter
+
+ggsave("../Results/R_outputs/MYB1_DE_up_jitter5.svg", height = 3, width = 4)
+ggsave("../Results/R_outputs/MYB1_DE_up_jitter5.png", height = 3, width = 4)
+```
+
+
+
+## Set up test
+```{r}
+Mfam_and_I <- gene_fam_myb1_dot_peak_exp %>% 
+  filter(peak_cluster == 8) %>% 
+  nrow()
+
+Mfam <- nrow(gene_fam_myb1_dot_peak_exp)
+
+Mfam_and_I
+Mfam
+
+Mfam_and_I / Mfam
+
+chisq.test(
+  c(Mfam_and_I, Mfam - Mfam_and_I), p = c(exp.p, exp.q)
+)
+
+(27/61) 
+exp.p
+(27/61) / exp.p
+```
+
+
+# Write MYB1 OD 0.4 DE genes that have higest exp in idioblast
+```{r}
+GOI <- myb1_dot_0.4_peak_exp %>% 
+  filter(peak_cluster == 8)
+
+myb1_DE_0.4 %>% 
+  filter(gene_ID2 %in% GOI$features.plot) %>% 
+  filter(str_detect(X2, "ytoc|alco"))
+
+myb1_DE_0.4 %>% 
+  filter(gene_ID2 %in% GOI$features.plot) %>% 
+  filter(str_detect(X2, "myb|WRKY"))
+```
+
+```{r}
+myb1_DE_0.4 %>% 
+  filter(gene_ID2 %in% GOI$features.plot) %>% 
+  dplyr::select(log2FoldChange, padj, gene_ID, X2) %>% 
+  #filter(gene_ID != "CRO_05G006800.1") %>% 
+  head(10)
+```
+
+
+```{r}
+myb1_DE_0.4 %>% 
+  filter(gene_ID2 %in% GOI$features.plot) %>%
+  write_excel_csv("../Results/R_outputs/MYB1_0.4OD_DE_up_idio.csv")
+
+myb1_DE_0.4 %>% 
+  #filter(gene_ID2 %in% GOI$features.plot) %>%
+  write_excel_csv("../Results/R_outputs/MYB1_0.4OD_DE_up.csv")
+```
+
+# VennDiagram
+```{r}
+my_DEG <- list(IDM1 = myb1_DE_0.4$gene_ID,
+               IDM2 = myb2_DE_0.4$gene_ID,
+               IDM3 = myb3_DE_0.4$gene_ID, 
+               IDW1 = wrky_DE_0.4$gene_ID)
+
+library(ggVennDiagram)
+```
+
+```{r}
+ggVennDiagram(my_DEG) + 
+  #scale_fill_gradient(low="grey90",high = "red") +
+  scale_fill_gradientn(colors = brewer.pal(9, "YlGnBu"))
+```
+
+## All 4 DE 
+```{r}
+all_4_DE <- myb1_DE_0.4$gene_ID %>% 
+  intersect(myb2_DE_0.4$gene_ID) %>% 
+  intersect(myb3_DE_0.4$gene_ID) %>% 
+  intersect(wrky_DE_0.4$gene_ID) 
+
+all_4_DE2 <- rbind(
+  myb1_DE_0.4,
+  myb2_DE_0.4,
+  myb3_DE_0.4,
+  wrky_DE_0.4
+) %>% 
+  distinct(gene_ID, .keep_all = T) %>% 
+  filter(gene_ID %in% all_4_DE)
+
+head(all_4_DE2)
+```
+
+```{r}
+all_4_DE_dot <- DotPlot(CRO_RNA, features = all_4_DE2$gene_ID2)$data 
+```
+
+```{r}
+all_4_DE_dot_peak_exp <- all_4_DE_dot %>% 
+  group_by(features.plot) %>% 
+  slice_max(n = 1, order_by = avg.exp.scaled) %>% 
+  dplyr::select(features.plot, id)  %>% 
+  mutate(order_y = as.numeric(id)) %>% 
+  dplyr::rename(peak_cluster = id)  
+  
+
+all_4_DE_dot_peak_exp %>% 
+  filter(peak_cluster == 8)
+```
+```{r}
+all_4_DE_heat <- all_4_DE_dot %>% 
+  left_join(all_4_DE_dot_peak_exp, by = "features.plot") %>% 
+  mutate(features.plot = reorder(features.plot, -order_y)) %>% 
+  ggplot(aes(x = id, y = features.plot)) +
+  geom_tile(aes(fill = avg.exp.scaled)) +
+  scale_fill_gradientn(colors = brewer.pal(9, "YlGnBu")) +
+  labs(x = "Cluster",
+       y = "Genes",
+       fill = "Avg. Exp.",
+       title = "IDM1/2/3 & IDW1 DE up genes") + 
+  theme_classic() +
+  theme(axis.text.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.text = element_text(color = "black"),
+        legend.position = "top")
+
+wrap_plots(all_4_DE_heat, Leaf_cell_type_strip,
+           nrow = 2, heights = c(1, 0.05))
+```
+```{r}
+all_4_DE_dot_peak_exp %>% 
+  filter(peak_cluster == 8) %>% 
+  inner_join(all_4_DE2, by = c("features.plot"="gene_ID2"))
+```
+
+## IMD2/3 and IDW1
+```{r}
+DE3 <- myb2_DE_0.4$gene_ID %>% 
+  intersect(myb3_DE_0.4$gene_ID) %>% 
+  intersect(wrky_DE_0.4$gene_ID) %>% 
+  setdiff(myb1_DE_0.4$gene_ID)
+
+DE3.2 <- rbind(
+  myb2_DE_0.4,
+  myb3_DE_0.4,
+  wrky_DE_0.4
+) %>% 
+  distinct(gene_ID, .keep_all = T) %>% 
+  filter(gene_ID %in% DE3)
+
+head(DE3.2)
+```
+```{r}
+DE3.2_dot <- DotPlot(CRO_RNA, features = DE3.2$gene_ID2)$data 
+```
+
+```{r}
+DE3.2_dot_peak_exp <- DE3.2_dot %>% 
+  group_by(features.plot) %>% 
+  slice_max(n = 1, order_by = avg.exp.scaled) %>% 
+  dplyr::select(features.plot, id)  %>% 
+  mutate(order_y = as.numeric(id)) %>% 
+  dplyr::rename(peak_cluster = id)  
+  
+
+DE3.2_dot_peak_exp %>% 
+  group_by(peak_cluster) %>% 
+  dplyr::count()
+```
+
+# Mean separation plot for other TFs 
+```{r}
+myb1_DE_0.4 %>% 
+  filter(gene_ID %in% c("CRO_03G000120.5", 
+                          "CRO_04G033370.1",  "CRO_07G002170.1")) %>%
+  mutate(tag = case_when(
+    str_detect(gene_ID, "CRO_03G000120")  ~ "IDW1",
+    str_detect(gene_ID, "CRO_04G033370")  ~ "IDM2",
+    str_detect(gene_ID, "CRO_07G002170") ~ "IDM3"
+  )) %>% 
+  left_join(gene_table_long %>% 
+              filter(OD == 0.4), by = c("gene_ID" = "target_id")) %>% 
+  mutate(TF2 = case_when(
+    str_detect(TF, "MYB1") ~ "IDM1",
+    str_detect(TF, "MYB2") ~ "IDM2",
+    str_detect(TF, "MYB3") ~ "IDM3",
+    str_detect(TF, "WRKY") ~ "IDW1",
+    T ~ TF
+  )) %>% 
+  mutate(TF2 = factor(TF2, levels = c(
+      "GUS", "IDW1", "IDM3", "IDM2", "IDM1", "Combo", "MYC2-ORCA3"
+  ))) %>%  
+  filter(TF2 %in% c( "GUS", "IDM1")) %>% 
+  ggplot(aes(x = TF2, y = tpm)) +
+  facet_wrap(~tag, scales = "free_y", nrow = 1) +
+  ggbeeswarm::geom_quasirandom(aes(fill = TF2), color = "white", shape = 21,
+                               size = 3, alpha = 0.8) +
+  stat_summary(fun.data = "mean_se", geom = "pointrange", shape = 4, size = 0.2) +
+  scale_fill_manual(
+    values = c(carto_pal(5, "Vivid")[2], 
+               #carto_pal(7, "SunsetDark")[7],
+               carto_pal(7, "Mint")[4]
+               #carto_pal(7, "BluYl")[7]
+               #brewer.pal(8, "Set2")[2]
+               )
+  ) +
+  labs(x = "OE treatments, OD = 0.4") +
+  theme_classic() +
+  theme(
+    axis.text = element_text(color = "black"),
+    axis.text.x = element_text(hjust = 1, angle = 45),
+    legend.position = "none",
+    panel.spacing = unit(0.8, "lines")
+  )
+
+ggsave("../Results/R_outputs/MYB1_DE_up_jitter4.svg", height = 2, width = 4)
+ggsave("../Results/R_outputs/MYB1_DE_up_jitter4.png", height = 2, width = 4)
+```
+
+# Check MYB1 down genes 
+```{r}
+MYB1_down_0.4 <- myb1_results_0.4 %>% 
+  as.data.frame() %>% 
+  filter(padj < 0.05) %>% 
+  filter(log2FoldChange < 0) %>% 
+  mutate(gene_ID = row.names(.)) %>% 
+  left_join(CRO_funct_anno, by = c("gene_ID" = "X1"))
+
+head(MYB1_down_0.4)
+```
+
+ 
+# Check ATAC results 
+```{r}
+CRO_multiome <- readRDS("../../CRO_multiome/Results/R_output/CRO_multiome.Rds")
+CRO_multiome
+```
+## Load gene models 
+
+```{r}
+repr_gene_models <- read_delim("../../CRO_multiome/Data/cro_v3_anno/cro_v3.gene_models.repr.gff3",
+                             delim = "\t", col_names = F)
+
+head(repr_gene_models)
+```
+```{r}
+repr_loci <- repr_gene_models %>% 
+  dplyr::filter(X3 == "mRNA") %>% 
+  dplyr::select(X1, X4, X5, X7, X9) %>% 
+  separate(X9, c("ID", "Name"), sep = ";") %>% 
+  dplyr::select(-Name) %>% 
+  separate(ID, c("temp", "gene_ID"), sep = "=") %>% 
+  dplyr::select(-temp) %>% 
+  mutate(LocusID = str_sub(gene_ID, start = 1, end = 13)) %>% 
+  mutate(gene_ID = str_replace(gene_ID, "_", "-")) %>% 
+  mutate(LocusID = str_replace(LocusID, "_", "-")) %>% 
+  dplyr::rename(
+    Chr = X1,
+    start = X4,
+    end = X5,
+    strand = X7
+  )
+
+
+head(repr_loci)
+```
+## Coverage plots 
+```{r}
+myb1_DE <- myb1_DE %>% 
+  mutate(gene = substring(gene_ID2, first = 1, last = 13))
+
+myb1_DE
+```
+
+```{r}
+repr_loci %>% 
+  right_join(myb1_DE, by = c("LocusID" = "gene"))
+```
+
+```{r}
+CoveragePlot(region = "Chr4-62987328-62990928", CRO_multiome,
+             extend.upstream = 2000, extend.downstream = 2000,
+             group.by = "cell_type") &
+  scale_fill_manual(values = c(brewer.pal(6, "Accent")[1:3],
+                                brewer.pal(6, "Set2")[6],
+                                brewer.pal(6, "Accent")[5:6],
+                                "grey80")) 
+```
+```{r}
+CoveragePlot(region = "Chr7-11456128-11468340", CRO_multiome,
+             extend.upstream = 2000, extend.downstream = 2000,
+             group.by = "cell_type") &
+  scale_fill_manual(values = c(brewer.pal(6, "Accent")[1:3],
+                                brewer.pal(6, "Set2")[6],
+                                brewer.pal(6, "Accent")[5:6],
+                                "grey80")) 
+```
+ 
+```{r}
+CoveragePlot(region = "Chr2-73111956-73115497", CRO_multiome,
+             extend.upstream = 3000, extend.downstream = 3000,
+             group.by = "cell_type") &
+  scale_fill_manual(values = c(brewer.pal(6, "Accent")[1:3],
+                                brewer.pal(6, "Set2")[6],
+                                brewer.pal(6, "Accent")[5:6],
+                                "grey80")) 
+```
+```{r}
+AverageExpression(CRO_RNA, assays = "RNA", group.by = "cell_type")$RNA %>% 
+  as.data.frame() %>% 
+  mutate(gene_ID = row.names(.)) %>% 
+  write_excel_csv("../../CRO_multiome/Results/R_output/nuclei_Seurat_table.csv")
+```
+
+ 
+ 
+ 

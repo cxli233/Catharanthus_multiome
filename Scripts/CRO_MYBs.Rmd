@@ -1,0 +1,739 @@
+---
+title: "CRO_MYBs"
+author: "Chenxin Li"
+date: "2024-01-04"
+output: html_notebook
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Package 
+```{r}
+library(tidyverse)
+library(readxl)
+
+library(RColorBrewer)
+library(viridis)
+library(rcartocolor)
+library(svglite)
+
+library(patchwork)
+
+library(ggtree)
+library(ggtreeExtra)
+library(treeio)
+library(ape)
+
+library(Seurat)
+```
+# Data 
+## Bulk RNA-seq
+```{r}
+sra_metadata <- read_csv("../../CRO_petal_bulk_RNA/Data/metadata_SRA.csv")
+head(sra_metadata, 10)
+```
+
+```{r}
+bulk_RNAseq_data <- read_csv("../../CRO_petal_bulk_RNA/Results/R_output/bulk_exp_table_long.csv")
+head(bulk_RNAseq_data)
+```
+```{r}
+JA_libraries <- bulk_RNAseq_data %>% 
+  filter(`Sample ID` %in% c("Shoot Ctrl", "Shoot MeJA 6h", 
+                            "Suspension Ctrl", "Sus. MeJA 24hr"))
+
+head(JA_libraries)
+```
+
+## Single cell RNA-seq 
+```{r}
+CRO_RNA <- readRDS("../../CRO_multiome/Results/R_output/CRO_RNA.Rds")
+CRO_RNA
+```
+### Cell type color strip 
+```{r}
+CRO_RNA@meta.data
+```
+
+## Tree object
+```{r}
+CRO_MYB_tree <- read.tree("../Results/CRO_MYB_annotator/RESULTS/Catharanthus_roseus05FastTree_tree.tre")
+```
+
+```{r}
+Tip_table <- data.frame(
+  label = CRO_MYB_tree$tip.label
+) %>% 
+  mutate(source = case_when(
+    str_detect(label, "CRO") ~ "Cath.",
+    T ~ "MYB_annotator"
+  )) %>% 
+  mutate(label_2 = case_when(
+    str_detect(label, "Arabidopsis") ~ str_extract(label, "MYB\\d+"),
+    str_detect(label, "CRO") ~ str_remove_all(label, "CRO_|CRO.|_\\d+"),
+    T ~ ""
+  )) %>% 
+  mutate(label_3 = case_when(
+    str_detect(label, "Arabidopsis") ~ label_2,
+    str_detect(label, "CRO") ~ str_remove_all(label_2, "\\.\\d+"),
+    T ~ " "
+  )) %>% 
+  mutate(label_4 = case_when(
+    str_detect(label, "05G006800|04G033370|07G002170") ~ label_3,
+    T ~ ""
+  )) %>% 
+  mutate(species = case_when(
+    str_detect(label, "Arabidopsis") ~ "A. thaliana",
+    str_detect(label, "^CRO") ~ "C. roseus",
+    T ~ "other"
+  )) %>% 
+  mutate(species2 = case_when(
+    str_detect(label, "Arabidopsis") ~ "A. thaliana",
+    str_detect(label, "^CRO") ~ "C. roseus",
+    str_detect(label, "-lycopersicum-") ~ "S. lycopersicum",
+    str_detect(label, "Solanum-tuberosum-") ~ "S. tuberosum",
+    T ~ "other"
+  )) %>% 
+  mutate(label_5 = case_when(
+    str_detect(label, "lycoper") ~ str_extract(label, "MYB\\d+"),
+    T ~ label_3
+  )) %>% 
+  mutate(index = 1:n()) 
+
+head(Tip_table)
+```
+
+```{r}
+CRO_MYB_tree_nice <- full_join(
+  CRO_MYB_tree, Tip_table, by = "label"
+)
+```
+
+# Make tree 
+```{r}
+tree_all <- CRO_MYB_tree_nice %>% 
+  ggtree(
+    layout = "circular",
+    branch.length = "none"
+  ) +
+  #geom_tiplab(aes(label = label_3), size = 1.5) +
+  geom_tippoint(aes(color = species2))
+
+tree_all
+```
+
+## Tree with just Arabidopsis and Cath. 
+```{r}
+Ara_CRO_nodes <- Tip_table %>% 
+  filter(species %in% c("A. thaliana", "C. roseus"))
+
+subset_tree <- treeio::drop.tip(
+  CRO_MYB_tree_nice, 
+  CRO_MYB_tree$tip.label[!(CRO_MYB_tree$tip.label %in% Ara_CRO_nodes$label)]
+                        )
+```
+
+```{r}
+tree_at_cro <- subset_tree %>% 
+  ggtree(
+    layout = "circular",
+    branch.length = "none"
+  ) +
+  geom_tippoint(aes(color = species)) +
+  geom_tiplab(aes(label = label_3), size = 2.25) +
+  scale_color_manual(values = brewer.pal(8, "Set2")[c(1,4)]) +
+  theme(
+    legend.position = c(0.1, 0.1)
+  )
+
+tree_at_cro
+
+ggsave("../Results/R_output/AT_CRO_MYB_tree.svg", height = 8, width = 8)
+ggsave("../Results/R_output/AT_CRO_MYB_tree.pdf", height = 8, width = 8)
+ggsave("../Results/R_output/AT_CRO_MYB_tree.png", height = 8, width = 8)
+```
+```{r}
+subset_tree %>% 
+  ggtree(
+    layout = "circular",
+    branch.length = "none"
+  ) +
+  geom_tippoint(aes(color = species)) +
+  #geom_tiplab(aes(label = label_3), size = 2.25) +
+  scale_color_manual(values = brewer.pal(8, "Set2")[c(1,4)])+
+  theme(legend.position = "none") 
+
+ggsave("../Results/R_output/AT_CRO_MYB_tree_2.svg", height = 3, width = 3)
+ggsave("../Results/R_output/AT_CRO_MYB_tree_2.png", height = 3, width = 3)
+```
+
+## Tree with Arabidopsis, Catharanthus, tomato and potato 
+```{r}
+Ara_CRO_Solan_nodes <- Tip_table %>% 
+  filter(species2 %in% c("A. thaliana", "C. roseus", "S. tuberosum", "S. lycopersicum"))
+
+subset_tree2 <- treeio::drop.tip(
+  CRO_MYB_tree_nice, 
+  CRO_MYB_tree$tip.label[!(CRO_MYB_tree$tip.label %in% Ara_CRO_Solan_nodes$label)]
+                        )
+
+write_excel_csv(Ara_CRO_Solan_nodes, "../Results/R_output/Ara_CRO_Solan_nodes.csv")
+```
+
+```{r}
+subset_tree2 %>% 
+  ggtree(
+    layout = "circular",
+    branch.length = "none"
+  ) +
+  geom_tippoint(aes(color = species2)) +
+  geom_tiplab(aes(label = label_5), size = 2.25) +
+  scale_color_manual(values = c(
+    brewer.pal(8, "Set2")[c(1,4)],
+    "tomato3", "gold"
+  )
+    ) +
+  labs(color = "species") +
+  theme(
+   legend.position = c(0.1, 0.1) 
+  ) 
+
+ggsave("../Results/R_output/AT_CRO_Solan_MYB_tree.svg", height = 16, width = 16)
+ggsave("../Results/R_output/AT_CRO_Solan_MYB_tree.pdf", height = 16, width = 16)
+ggsave("../Results/R_output/AT_CRO_Solan_MYB_tree.png", height = 16, width = 16)
+```
+
+## Check Li's MYB of interest 
+### 05G006800.1 "MYB1"
+```{r}
+Tip_table %>% 
+  filter(label_2 %in% c("MYB000",
+                        "MYB023",
+                        "MYB066")) 
+```
+
+* MYB066 - werewolf - root hair and epidermis
+* MYB023 - trichome 
+* MYB000 - GL1 - trichome 
+
+```{r}
+mrca_node <- getMRCA(CRO_MYB_tree, tip = c("Arabidopsis-thaliana-At3g27920-At2R-MYB000", "CRO-05G006800.1")) 
+descendant_tips <- CRO_MYB_tree$tip.label[offspring(CRO_MYB_tree, mrca_node)]
+
+subset_tree_05G006800 <- treeio::drop.tip(
+  CRO_MYB_tree_nice, 
+  CRO_MYB_tree$tip.label[!(CRO_MYB_tree$tip.label %in% descendant_tips)]
+                        )
+
+descendant_tips
+```
+ 
+```{r}
+subset_tree_05G006800 %>% 
+  ggtree(
+    layout = "circular",
+    branch.length = "none"
+  ) +
+  geom_tippoint(aes(color = species)) +
+  geom_tiplab(aes(label = label), size = 2.25) 
+```
+### 04G033370
+```{r}
+Tip_table %>% 
+  filter(label_2 %in% c("MYB008",
+                        "MYB006")) 
+```
+
+* MYB008
+* MYB006 
+
+```{r}
+mrca_node2 <- getMRCA(CRO_MYB_tree, tip = c("Arabidopsis-thaliana-At4g09460-At2R-MYB006", "CRO-04G033370.1")) 
+descendant_tips2 <- CRO_MYB_tree$tip.label[offspring(CRO_MYB_tree, mrca_node2)]
+
+subset_tree_04G033370 <- treeio::drop.tip(
+  CRO_MYB_tree_nice, 
+  CRO_MYB_tree$tip.label[!(CRO_MYB_tree$tip.label %in% descendant_tips2)]
+                        )
+
+descendant_tips2
+```
+```{r}
+subset_tree_04G033370 %>% 
+  ggtree(
+    layout = "circular",
+    branch.length = "none"
+  ) +
+  geom_tippoint(aes(color = species)) +
+  geom_tiplab(aes(label = label), size = 2.25) 
+```
+
+### 07G002170
+```{r}
+Tip_table %>% 
+  filter(label_2 %in% c("MYB123")) 
+```
+* MYB123 TT2 proanthocyanidin accumulation of developing seed
+
+```{r}
+mrca_node3 <- getMRCA(CRO_MYB_tree, tip = c("Arabidopsis-thaliana-At5g35550-At2R-MYB123", "CRO-07G002170.1")) 
+descendant_tips3 <- CRO_MYB_tree$tip.label[offspring(CRO_MYB_tree, mrca_node3)]
+
+subset_tree_07G002170 <- treeio::drop.tip(
+  CRO_MYB_tree_nice, 
+  CRO_MYB_tree$tip.label[!(CRO_MYB_tree$tip.label %in% descendant_tips3)]
+                        )
+
+descendant_tips3
+```
+
+```{r}
+subset_tree_07G002170 %>% 
+  ggtree(
+    layout = "circular",
+    branch.length = "none"
+  ) +
+  geom_tippoint(aes(color = species)) +
+  geom_tiplab(aes(label = label), size = 2.25) 
+```
+
+# Add JA treatment logFC
+```{r}
+tree_at_cro2 <- subset_tree %>% 
+  ggtree(
+    #layout = "circular",
+    #branch.length = "none"
+  ) +
+  geom_tippoint(aes(color = species), size = 1) +
+  #geom_tiplab(aes(label = label_3), size = 2.25) +
+  #theme(legend.position = c(0.8, 0.2)) +
+  scale_color_manual(values = brewer.pal(8, "Set2")[c(1,4)])
+
+tree_at_cro2
+```
+
+```{r}
+JA_libraries_wide <- JA_libraries %>% 
+  mutate(tag = str_remove(target_id, "CRO_")) %>% 
+  mutate(tag = str_remove(tag, "\\.\\d+")) %>%
+  mutate(gene_ID = str_replace(target_id, "_", "-")) %>% 
+  select(gene_ID, tag, tpm, `Sample ID`) %>% 
+  #filter(label_3 %in% Tip_table$label_3) %>% 
+  pivot_wider(names_from = `Sample ID`, values_from = tpm) %>% 
+  mutate(shoot_Log2FC = log2((`Shoot MeJA 6h` + 1) / (`Shoot Ctrl` + 1))) %>% 
+  mutate(sus_Log2FC = log2((`Sus. MeJA 24hr` + 1) / (`Suspension Ctrl` + 1))) 
+
+head(JA_libraries_wide)
+```
+```{r}
+JA_libraries_wide %>% 
+  filter(tag %in% Tip_table$label_3) %>% 
+  #filter(shoot_Log2FC > 1) %>% 
+  #filter(sus_Log2FC > 1) %>% 
+  ggplot(aes(x = shoot_Log2FC, y = sus_Log2FC)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  theme_classic() +
+  coord_fixed()
+```
+
+```{r}
+TF_candidate_wide <- JA_libraries_wide %>% 
+  filter(tag %in% c("03G000120", 
+                          "04G033370", "05G006800", "07G002170")) %>%
+   mutate(tag2 = case_when(
+    tag == "03G000120" ~ "IDW1",
+    tag == "04G033370" ~ "IDM2",
+    tag == "05G006800" ~ "IDM1",
+    tag == "07G002170" ~ "IDM3"
+  )) %>% 
+  mutate(tag2 = factor(tag2, levels = c(
+     "IDW1", "IDM3", "IDM2", "IDM1"
+  ))) 
+
+TF_candidate_wide
+```
+
+## JA response of idioblast TF candidates 
+```{r}
+TF_JA_lfc_plot <- TF_candidate_wide %>% 
+  ggplot(aes(x = tag2, y = "24 hr MeJA / ctrl")) +
+  geom_tile(aes(fill = sus_Log2FC)) +
+  scale_fill_gradientn(colors = rev(brewer.pal(11, "RdBu")),
+                       limits = c(-5.5, 5.5),
+                       breaks = c(-5, 0, 5)) +
+  labs(x = "TFs",
+       y = "",
+       fill = "log2FC") + 
+  theme_classic() +
+  theme(axis.text = element_text(color = "black")) 
+ 
+
+TF_JA_tpm_plot <- TF_candidate_wide %>% 
+  dplyr::select(tag2, `Suspension Ctrl`, `Sus. MeJA 24hr`) %>% 
+  pivot_longer(cols = !tag2, names_to = "treatment", values_to = "tpm") %>% 
+  mutate(log2TPM = log2(tpm + 1)) %>% 
+  ggplot(aes(x = tag2, y = treatment)) +
+  geom_tile(aes(fill = log2TPM)) +
+  scale_fill_gradientn(colors = brewer.pal(9, "YlGnBu"),
+                       #limits = c(-5.5, 5.5),
+                       breaks = c(1, 3, 5)
+                       ) +
+  labs(x = "TFs",
+       y = "treatment",
+       fill = "log2(TPM + 1)") + 
+  theme_classic() +
+  theme(axis.text = element_text(color = "black")) 
+
+wrap_plots(TF_JA_tpm_plot, TF_JA_lfc_plot,
+           nrow = 2, heights = c(1, 0.6),
+           guides = "collect") &
+  theme(legend.key.height = unit(0.8, "lines"),
+        legend.key.width = unit(0.7, "lines"))
+
+ggsave("../Results/R_output/IDW_IDM_JA.svg", height = 3, width = 6)
+ggsave("../Results/R_output/IDW_IDM_JA.png", height = 3, width = 6)
+```
+
+```{r}
+TF_JA_tpm_plot
+
+ggsave("../Results/R_output/IDW_IDM_JA-1.svg", height = 2, width = 5.5)
+ggsave("../Results/R_output/IDW_IDM_JA-1.png", height = 2, width = 5.5)
+```
+
+
+```{r}
+JA_LFC <- JA_libraries_wide %>% 
+  filter(tag %in% Tip_table$label_3) %>% 
+  dplyr::select(tag, gene_ID, shoot_Log2FC, sus_Log2FC) %>% 
+  pivot_longer(names_to = "experiment", values_to = "log2FC", cols = contains("Log2FC")) %>% 
+  mutate(Treatment = case_when(
+    str_detect(experiment, "shoot") ~ "Shoot MeJA 6hr",
+    str_detect(experiment, "sus") ~ "Sus. MeJA 6hr",
+  )) %>% 
+  mutate(log2FC_clipped = case_when(
+    log2FC > 2 ~ 2,
+    log2FC < -1 ~ -1,
+    T ~ log2FC
+  )) %>% 
+  mutate(status = case_when(
+    log2FC > 1 ~ "JA upregulated",
+    T ~ "other"
+  ))
+  
+
+head(JA_LFC)
+```
+
+```{r}
+summary(JA_LFC$log2FC)
+quantile(JA_LFC$log2FC, c(0.025, 0.05, 0.1, 0.9, 0.95, 0.975))
+```
+
+## Assign JA-MYBs 
+```{r}
+JA_MYBs <- JA_libraries_wide %>% 
+  filter(tag %in% Tip_table$label_3) %>% 
+  mutate(status = case_when(
+    shoot_Log2FC > 1 |  
+      sus_Log2FC > 1 ~ "JA up MYB",
+    T ~ "other"
+  )) %>% 
+  select(gene_ID, shoot_Log2FC, sus_Log2FC,status)  
+
+JA_MYBs
+```
+ 
+
+
+```{r}
+JA_MYBs %>% 
+  group_by(status) %>% 
+  dplyr::count()
+
+JA_MYBs %>% 
+  filter(status == "JA up MYB") %>% 
+  arrange(gene_ID)
+```
+
+18 JA MYBs 
+The 3 MYBs that I pulled out from idioblast are all JA MYB (up in the suspension culture experiment). 
+
+# Add single cell data 
+```{r}
+# JA_MYBs$gene_ID
+MYB_dotplot <- DotPlot(CRO_RNA, features = JA_MYBs$gene_ID, group.by = "cell_type")$data  %>% 
+  mutate(id2 = case_when(
+    id == "Mesophyll" ~ "M",
+    id == "Epidermis" ~ "E",
+    id == "Guard cells" ~ "GC",
+    id == "Vasculature" ~ "V",
+    id == "IPAP" ~ "IP",
+    id == "Idioblast" ~ "Id",
+    T ~ "Un"
+  )) %>% 
+  mutate(id2 = factor(id2, levels = c(
+    "IP", "E", "Id", "M", "GC", "V", "Un" 
+  )))
+
+MYB_dotplot
+```
+
+## Assign IPAP, Epi, and Id MYBs 
+ 
+
+```{r}
+MYB_classification <- MYB_dotplot %>% 
+  mutate(gene_ID = features.plot) %>% 
+  group_by(gene_ID) %>% 
+  slice_max(n = 1, order_by = avg.exp.scaled) %>% 
+  mutate(peak_exp = id2) %>% 
+  select(gene_ID, peak_exp, avg.exp.scaled) %>% 
+  full_join(JA_MYBs, by = "gene_ID") %>% 
+  arrange(gene_ID)
+
+head(MYB_classification)
+```
+```{r}
+Interesting_MYBs <- MYB_classification %>% 
+  filter(status == "JA up MYB" | 
+           peak_exp %in% c("Id", "IP", "E")) %>% 
+  arrange(peak_exp)
+
+Interesting_MYBs
+write_excel_csv(Interesting_MYBs, "../Results/R_output/Interesting_MYBs.csv")
+```
+```{r}
+Interesting_MYBs %>% 
+  group_by(peak_exp) %>% 
+  dplyr::count()
+
+MYB_classification %>% 
+  group_by(peak_exp) %>% 
+  dplyr::count() %>% 
+  dplyr::rename(total = n)
+```
+```{r}
+JA_MYBs_at_cell_type <- MYB_classification %>% 
+  group_by(peak_exp, status) %>% 
+  dplyr::count() %>% 
+  ungroup() %>% 
+  mutate(
+    peak_exp2 = case_when(
+      is.na(peak_exp) ~ "ND",
+      T ~ as.character(peak_exp)
+    )
+  ) %>% 
+  inner_join(
+    MYB_classification %>% 
+  group_by(peak_exp) %>% 
+  dplyr::count() %>% 
+  dplyr::rename(total = n), 
+  by = "peak_exp"
+  ) %>% 
+  mutate(percent = n / total * 100) %>% 
+  mutate(peak_exp2 = factor(peak_exp2, levels = c(
+   "Id", "E", "V", "Un","GC",  "IP", "ND", "M"
+  ))) 
+  
+JA_MYBs_at_cell_type %>% 
+  ggplot(aes(x = peak_exp2, y = percent)) +
+  geom_bar(stat = "identity", aes(fill = status)) +
+  scale_fill_manual(values  = c("tomato1", "grey80")) +
+  labs(x = "Cell type of highest expression",
+       y = "% MYBs") +
+  theme_classic() +
+  theme(
+    legend.position = "top"
+  )
+
+ggsave("../Results/R_output/JA_MYBs_at_cell_type.svg", height = 2.5, width = 3)
+ggsave("../Results/R_output/JA_MYBs_at_cell_type.png", height = 2.5, width = 3)
+```
+```{r}
+JA_MYBs_at_cell_type
+```
+
+```{r}
+Interesting_MYBs %>% 
+  filter(status == "JA up MYB" |
+           peak_exp == "Id")
+```
+
+# Wrap plots together 
+```{r}
+tree_at_cro3 <- tree_at_cro2 +
+  labs(color = "Species") +
+  geom_fruit(data = JA_MYBs,
+             geom = geom_point,
+             shape = 21, color = "white",
+             size = 1,
+             aes(y = gene_ID, x = 0, fill = status),
+             pwidth = 0.01) +
+  scale_fill_manual(values  = c("tomato1", "grey30")) +
+  labs(fill = "Response to JA") +
+  ggnewscale::new_scale_fill() +
+  geom_fruit(
+     data = MYB_dotplot,
+     geom = geom_tile,
+     color = "grey90",
+     aes(y = features.plot, x = id2, fill = avg.exp.scaled),
+     axis.params = list(axis = "x", text.size = 2, vjust = -0.15)
+   ) +
+  scale_fill_gradientn(colors = viridis(n = 10, option = "A", begin = 0, end = 0.95)) +
+  labs(fill = "Avg. Exp.\nscRNA-seq") +
+  theme(legend.position = "left")
+
+
+tree_at_cro3
+
+ggsave("../Results/R_output/AT_CRO_MYB_tree_extra.svg", height = 8, width = 6)
+ggsave("../Results/R_output/AT_CRO_MYB_tree_extra.pdf", height = 8, width = 6)
+ggsave("../Results/R_output/AT_CRO_MYB_tree_extra.png", height = 8, width = 6)
+```
+
+## A different version with idioblast MYB1 labeled 
+```{r}
+tree_at_cro2 +
+  geom_tiplab(aes(label = label_4), size = 3, hjust = -0.5, vjust = 0.5) +
+  labs(color = "Species") +
+  geom_fruit(data = JA_MYBs,
+             geom = geom_point,
+             shape = 21, color = "white",
+             size = 1,
+             aes(y = gene_ID, x = 0, fill = status),
+             pwidth = 0.01) +
+  scale_fill_manual(values  = c("tomato1", "grey30")) +
+  labs(fill = "Response to JA") +
+  ggnewscale::new_scale_fill() +
+  geom_fruit(
+     data = MYB_dotplot,
+     geom = geom_tile,
+     color = "grey90",
+     aes(y = features.plot, x = id2, fill = avg.exp.scaled),
+     axis.params = list(axis = "x", text.size = 2, vjust = -0.15)
+   ) +
+  scale_fill_gradientn(colors = viridis(n = 10, option = "A", begin = 0, end = 0.95)) +
+  scale_y_continuous(breaks = seq(from = 3, to = nrow(Tip_table)-2, by = 2)) +
+  labs(fill = "Avg. Exp.\nscRNA-seq") +
+  theme(legend.position = "left",
+        panel.grid.major.y = element_line(),
+        panel.grid.minor.y = element_line())
+
+ggsave("../Results/R_output/AT_CRO_MYB_tree_extra_2.svg", height = 8, width = 6)
+ggsave("../Results/R_output/AT_CRO_MYB_tree_extra_2.pdf", height = 8, width = 6)
+ggsave("../Results/R_output/AT_CRO_MYB_tree_extra_2.png", height = 8, width = 6)
+```
+
+ 
+# Load bHLH genes  
+```{r}
+bHLH_list <- read_delim("../Results/CRO_bHLH_annotator/RESULTS/Catharanthus_roseus04b_candidate_2_reference_mapping_file.txt", 
+                        delim = "\t")
+
+head(bHLH_list)
+```
+## JA up bHLHs
+```{r}
+JA_libraries_wide
+```
+
+```{r}
+JA_bHLH <- JA_libraries_wide %>% 
+  filter(gene_ID %in% bHLH_list$NewMember) %>% 
+  mutate(status = case_when(
+    shoot_Log2FC > 1 |  
+      sus_Log2FC > 1 ~ "JA up bHLH",
+    T ~ "other"
+  )) %>% 
+  select(gene_ID, shoot_Log2FC, sus_Log2FC,status)  
+
+head(JA_bHLH)
+```
+```{r}
+JA_bHLH %>% 
+  group_by(status) %>% 
+  dplyr::count()
+```
+
+* 27 JA up bHLH
+* 210 non-JA up bHLH
+
+```{r}
+JA_bHLH %>% 
+  filter(status == "JA up bHLH") %>% 
+  arrange(gene_ID)
+```
+
+04G007340.2 is JA up  
+
+## bHLH at single cell  
+```{r}
+bHLH_heat_data <- DotPlot(CRO_RNA, features = bHLH_list$NewMember)$data
+
+bHLH_peak_exp <- bHLH_heat_data %>% 
+  group_by(features.plot) %>% 
+  slice_max(n = 1, order_by = avg.exp.scaled) %>% 
+  ungroup() %>% 
+  select(features.plot, id) %>% 
+  dplyr::rename(peak_cluster = id) %>% 
+  mutate(order_y = as.numeric(peak_cluster))
+
+head(bHLH_peak_exp)
+```
+```{r}
+bHLH_heat_data %>% 
+  left_join(bHLH_peak_exp, by = "features.plot") %>% 
+  mutate(features.plot = reorder(features.plot, -order_y)) %>% 
+  ggplot(aes(x = id, y = features.plot)) +
+  geom_tile(aes(fill = avg.exp.scaled)) +
+  scale_fill_gradientn(colors = brewer.pal(9, "YlGnBu")) +
+  labs(y = "bHLH genes",
+       x = "cell cluters",
+       fill = "Avg. Exp") +
+  theme_classic() +
+  theme(axis.text.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.text = element_text(color = "black"),
+        legend.position = "top")
+
+
+```
+```{r}
+idioblast_bHLH <- bHLH_peak_exp %>% 
+  filter(peak_cluster == 8)
+```
+
+```{r}
+DotPlot(CRO_RNA, features = rev(idioblast_bHLH$features.plot)) +
+  coord_flip()
+```
+A potential bHLHs that interacts with idioblast MYBs: 04G007340.2 
+
+```{r}
+bHLH_list %>% 
+  filter(NewMember %in% idioblast_bHLH$features.plot) %>% 
+  select(-EdgeDistance, -PatristicDistance)
+```
+
+CRO-04G007340.2	seems to be the interesting one 
+
+```{r}
+bHLH_list %>% 
+  inner_join(JA_bHLH, by = c("NewMember"="gene_ID")) %>% 
+  filter(status == "JA up bHLH") %>% 
+  select(-EdgeDistance, -PatristicDistance)
+```
+
+```{r}
+bHLH_list %>% 
+  inner_join(JA_bHLH, by = c("NewMember"="gene_ID")) %>% 
+  filter(status == "JA up bHLH") %>% 
+  filter(NewMember %in% idioblast_bHLH$features.plot) %>% 
+  select(-EdgeDistance, -PatristicDistance)
+```
+
+3 bHLHs that are both JA up and idioblast specific. 
