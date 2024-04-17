@@ -145,6 +145,9 @@ MIA_TFs <- MIA_genes_info %>%
 
 MIA_TFs
 ```
+```{r}
+write_excel_csv(MIA_TFs, "../Results/R_output/MIA_TFs.csv")
+```
 
 
 # Pull gene expression matrix 
@@ -497,7 +500,7 @@ module_line_plot <- z_score_modules %>%
   ) +
   scale_color_manual(values = carto_pal(7, "BluGrn")[c(3, 5, 7)],
                      limits = c("ISY", "SLS1", "DAT")) +
-  labs(x = "Seurat cluster",
+  labs(x = "cell cluster",
        y = "z score",
        color = "example") +
   theme_classic() +
@@ -505,14 +508,15 @@ module_line_plot <- z_score_modules %>%
     text = element_text(size = 14),
     axis.text = element_text(color = "black"),
     panel.spacing = unit(1, "line"),
-    legend.position = "top"
+    legend.position = "top",
+    strip.text.y.right = element_blank()
   )
 
 wrap_plots(module_line_plot, Leaf_cell_type_strip,
            nrow = 2, heights = c(1, 0.08))
 
-ggsave("../Results/R_output/Module_line.svg", height = 4.5, width = 7, bg = "white")
-ggsave("../Results/R_output/Module_line.png", height = 4.5, width = 7, bg = "white")
+ggsave("../Results/R_output/Module_line.svg", height = 4.5, width = 6.5, bg = "white")
+ggsave("../Results/R_output/Module_line.png", height = 4.5, width = 6.5, bg = "white")
 ```
 
 # Network graph 
@@ -997,9 +1001,9 @@ WRKY_TF
 
 ## MYB
 ```{r}
-DefaultAssay(CRO_multiome) <- "RNA"
+#DefaultAssay(CRO_multiome) <- "RNA"
 
-DotPlot(CRO_multiome, features = MYB_TFs$gene_ID.y, 
+DotPlot(CRO_RNA, features = MYB_TFs$gene_ID.y, 
         group.by = "cell_type")$data %>% 
   mutate(id2 = case_when(
     str_detect(id, "Meso") ~ "M",
@@ -1027,6 +1031,7 @@ DotPlot(CRO_multiome, features = MYB_TFs$gene_ID.y,
   geom_point(aes(size = pct.exp, fill = avg.exp.scaled), shape = 21, color = "white") +
   # scale_y_discrete(label = NULL) +
   scale_fill_viridis(option = "A", begin = 0, end = 0.9) +
+  scale_size(breaks = c(10, 25, 50)) +
   guides(size = guide_legend(override.aes = list(fill = "grey40"),
                              title.position = "top", ncol = 1)) +
   guides(fill = guide_colorbar(title.position = "top", order = 1)) +
@@ -1034,7 +1039,7 @@ DotPlot(CRO_multiome, features = MYB_TFs$gene_ID.y,
        y = NULL, 
        fill = "Avg.\nExp.",
        size = "% Exp.",
-       title = "Myb TFs in modules") +
+       title = "MYB TFs in modules") +
   #theme_minimal() +
   theme_classic() +
   theme(text = element_text(size = 14, color = "black"),
@@ -1046,14 +1051,14 @@ DotPlot(CRO_multiome, features = MYB_TFs$gene_ID.y,
         legend.key.height = unit(0.8, "lines"),
         legend.key.width = unit(0.8, "lines"),
         legend.title = element_text(size = 12),
-        title = element_text(size = 10, face = "bold")) 
+        title = element_text(size = 10, face = "plain")) 
 
 ggsave("../Results/R_output/MYB_TFs.svg", height = 4, width = 4, bg = "white")
 ggsave("../Results/R_output/MYB_TFs.png", height = 4, width = 4, bg = "white")
 ```
 ## Homeo 
 ```{r}
-DotPlot(CRO_multiome, features = Homeo_TF$gene_ID.y, 
+DotPlot(CRO_RNA, features = Homeo_TF$gene_ID.y, 
         group.by = "cell_type")$data %>% 
   mutate(id2 = case_when(
     str_detect(id, "Meso") ~ "M",
@@ -1101,14 +1106,14 @@ DotPlot(CRO_multiome, features = Homeo_TF$gene_ID.y,
         legend.key.height = unit(0.8, "lines"),
         legend.key.width = unit(0.8, "lines"),
         legend.title = element_text(size = 12),
-        title = element_text(size = 10, face = "bold")) 
+        title = element_text(size = 10, face = "plain")) 
 
 ggsave("../Results/R_output/Homeo_TFs.svg", height = 4, width = 4, bg = "white")
 ggsave("../Results/R_output/Homeo_TFs.png", height = 4, width = 4, bg = "white")
 ```
 ## WRKY
 ```{r}
-DotPlot(CRO_multiome, features = WRKY_TF$gene_ID.y, 
+DotPlot(CRO_RNA, features = WRKY_TF$gene_ID.y, 
         group.by = "cell_type")$data %>% 
   mutate(id2 = case_when(
     str_detect(id, "Meso") ~ "M",
@@ -1136,6 +1141,7 @@ DotPlot(CRO_multiome, features = WRKY_TF$gene_ID.y,
   geom_point(aes(size = pct.exp, fill = avg.exp.scaled), shape = 21, color = "white") +
   # scale_y_discrete(label = NULL) +
   scale_fill_viridis(option = "A", begin = 0, end = 0.9) +
+  scale_size(breaks = c(10, 25, 50)) + 
   guides(size = guide_legend(override.aes = list(fill = "grey40"),
                              title.position = "top", ncol = 1)) +
   guides(fill = guide_colorbar(title.position = "top", order = 1)) +
@@ -1155,7 +1161,7 @@ DotPlot(CRO_multiome, features = WRKY_TF$gene_ID.y,
         legend.key.height = unit(0.8, "lines"),
         legend.key.width = unit(0.8, "lines"),
         legend.title = element_text(size = 12),
-        title = element_text(size = 10, face = "bold")) 
+        title = element_text(size = 10, face = "plain")) 
 
 ggsave("../Results/R_output/WRKY_TFs.svg", height = 4, width = 4, bg = "white")
 ggsave("../Results/R_output/WRKY_TFs.png", height = 4, width = 4, bg = "white")

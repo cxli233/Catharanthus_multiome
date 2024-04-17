@@ -272,7 +272,7 @@ gene_table_long_s <- gene_table_long %>%
   group_by(target_id, TF, OD) %>% 
   summarise(mean.logTPM = mean(logTPM)) %>% 
   ungroup() %>% 
-  group_by(target_id) %>% 
+  group_by(target_id, OD) %>% 
   mutate(z.score = (mean.logTPM - mean(mean.logTPM))/sd(mean.logTPM)) %>% 
   ungroup() %>% 
   mutate(gene = substring(target_id, first = 1, last = 13))
