@@ -143,12 +143,80 @@ protoplast_exp_table %>%
     legend.position = "bottom",
     strip.background = element_blank(),
     axis.text.x = element_blank(),
-    panel.spacing.y = unit(0.7, "lines")
+    panel.spacing.y = unit(0.7, "lines"),
+    strip.text.x.top = element_text(face = "italic")
   )
 
 ggsave("../Results/R_outputs/protoplast_TF_candidates.svg", height = 2, width = 5.5)
 ggsave("../Results/R_outputs/protoplast_TF_candidates.png", height = 2, width = 5.5)
 ```
+
+# Check published TFs 
+CRO_03G006290.2 # GATA1
+CRO_08G032360.2 # bHLH
+CRO_04G027990.1 # MYBR2
+
+```{r}
+protoplast_exp_table %>% 
+  mutate(cell_type2 = str_remove(cell_type, " protoplasts")) %>% 
+  mutate(gene = str_remove(target_id, "\\.\\d+")) %>% 
+  filter(gene %in% c("CRO_03G006290", 
+                          "CRO_08G032360", "CRO_04G027990")) %>%
+  mutate(tag = case_when(
+    gene == "CRO_03G006290" ~ "GATA1",
+    gene == "CRO_08G032360" ~ "HIVE",
+    gene == "CRO_04G027990" ~ "MYBR2"
+  )) %>%
+  ggplot(aes(x = cell_type2, y=tpm)) +
+  facet_wrap(~tag, scales = "free", ncol = 4) +
+  geom_point(aes(fill = cell_type2), alpha = 0.8, size = 3, 
+             shape = 21, color = "white", 
+             position = position_jitter(width = 0.1, seed = 666)) +
+  stat_summary(geom = "pointrange", fun.data = "mean_se", size = 0.2, shape = 4) +
+  scale_fill_manual(values = carto_pal(11, "Vivid")[c(2,4)]) +
+  labs(x = NULL,
+       y = "tpm",
+       fill = "cell type") +
+  theme_classic() +
+  theme(
+    legend.position = "bottom",
+    strip.background = element_blank(),
+    axis.text.x = element_blank(),
+    panel.spacing.y = unit(0.7, "lines")
+  )
+```
+
+```{r}
+protoplast_exp_table %>% 
+  mutate(cell_type2 = str_remove(cell_type, " protoplasts")) %>% 
+  mutate(gene = str_remove(target_id, "\\.\\d+")) %>% 
+  filter(gene %in% c("CRO_02G002580", "CRO_04G007340")) %>%
+  mutate(tag = case_when(
+    gene == "CRO_02G002580" ~ "IDM4",
+    gene == "CRO_04G007340" ~ "IDBHLH1"
+  )) %>%
+  ggplot(aes(x = cell_type2, y=tpm)) +
+  facet_wrap(~tag, scales = "free", ncol = 4) +
+  geom_point(aes(fill = cell_type2), alpha = 0.8, size = 3, 
+             shape = 21, color = "white", 
+             position = position_jitter(width = 0.1, seed = 666)) +
+  stat_summary(geom = "pointrange", fun.data = "mean_se", size = 0.2, shape = 4) +
+  scale_fill_manual(values = carto_pal(11, "Vivid")[c(2,4)]) +
+  labs(x = NULL,
+       y = "tpm",
+       fill = "cell type") +
+  theme_classic() +
+  theme(
+    legend.position = "bottom",
+    strip.background = element_blank(),
+    axis.text.x = element_blank(),
+    panel.spacing.y = unit(0.7, "lines")
+  )
+
+ggsave("../Results/R_outputs/protoplast_TF_candidates_2.svg", height = 2, width = 3)
+ggsave("../Results/R_outputs/protoplast_TF_candidates_2.png", height = 2, width = 3)
+```
+
 # DEseq 
 ## Make count table 
 
