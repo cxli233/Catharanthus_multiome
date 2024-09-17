@@ -41,7 +41,7 @@ DefaultAssay(CRO_multiome) <- "MACS2"
 ```{r}
 CRO_multiome@meta.data %>% 
   group_by(cell_type) %>% 
-  count()
+  dplyr::count()
 ```
 
 
@@ -341,6 +341,20 @@ wrap_plots(TDC_cluster_cov, TDC_cluster, heights = c(1, 0.03), nrow = 2)
 
 ggsave("../Results/R_output/TDC_region.svg", height = 4, width = 7, bg = "white")
 ggsave("../Results/R_output/TDC_region.png", height = 4, width = 7, bg = "white")
+```
+```{r}
+TDC_track <- wrap_plots(TDC_cluster_cov, TDC_cluster, heights = c(1, 0.03), nrow = 2) &
+  theme(axis.text.x = element_blank()) &
+  labs(x = NULL)
+
+wrap_plots(
+  TDC_track, DAT_track, 
+  widths = c(1, 0.01, 0.75),
+  design = c("A#B") 
+)
+
+ggsave("../Results/R_output/TDC_DAT_examples.svg", height = 4, width = 7, bg = "white")
+ggsave("../Results/R_output/TDC_DAT_examples.png", height = 4, width = 7, bg = "white")
 ```
 
 

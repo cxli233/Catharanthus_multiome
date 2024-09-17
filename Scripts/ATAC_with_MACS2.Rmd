@@ -177,7 +177,7 @@ CRO_multiome <- RunUMAP(CRO_multiome,
 ```
 
 ```{r}
-#CRO_multiome <- readRDS("../Results/R_output/CRO_multiome.Rds")
+CRO_multiome <- readRDS("../Results/R_output/CRO_multiome.Rds")
 Multi_RNA_umap <- DimPlot(CRO_multiome, reduction = "umap.rna", 
                           group.by = "cell_type") +
   ggtitle("RNA")
@@ -192,7 +192,7 @@ Multi_joint_umap <- DimPlot(CRO_multiome, reduction = "wnn.umap",
 
 combined_UMAPs <- wrap_plots(
  Multi_RNA_umap + 
-   labs(tag = "A"),
+   labs(tag = "(c)"),
  Multi_ATAC_umap,
  Multi_joint_umap,
  nrow = 1, guides = "collect"

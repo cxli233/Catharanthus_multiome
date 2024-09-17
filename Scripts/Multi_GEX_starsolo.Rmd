@@ -87,7 +87,7 @@ AZ_hist2 <- AZ@meta.data %>%
 
 AZ_QC <- wrap_plots(
   AZ_hist1 + 
-    labs(tag = "A"), blank,
+    labs(tag = "(a)"), blank,
   AZ_scatter +
     labs(title = "rep1"), AZ_hist2,
   nrow = 2, ncol = 2, 
@@ -140,7 +140,7 @@ BB_hist2 <- BB@meta.data %>%
 
 BB_QC <- wrap_plots(
   BB_hist1 +
-    labs(tag = "B"), blank,
+    labs(tag = "(b)"), blank,
   BB_scatter +
     labs(title = "rep2"), BB_hist2,
   nrow = 2, ncol = 2, 
@@ -194,7 +194,7 @@ BD_hist2 <- BD@meta.data %>%
 
 BD_QC <- wrap_plots(
   BD_hist1 +
-    labs(tag = "C"), blank,
+    labs(tag = "(c)"), blank,
   BD_scatter +
     labs(title = "rep3"), BD_hist2,
   nrow = 2, ncol = 2, 
@@ -430,7 +430,7 @@ MIA_heatmap <- MIA_at_cluster$data %>%
   theme_classic() +
   theme(text = element_text(size = 14, color = "black"),
         axis.text = element_text(color = "black"),
-        axis.text.y.left = element_text(hjust = 0.5),
+        axis.text.y.left = element_text(hjust = 0.5, face = "italic"),
         legend.key.width = unit(0.8, "lines"))
 
 MIA_heatmap
@@ -587,7 +587,7 @@ Leaf_cell_type_strip <- leaf_cell_type_assignment %>%
   ggplot(aes(x = cluster, y = "" )) +
   geom_tile(aes(fill = cell_type)) +
   scale_fill_manual(values = c(brewer.pal(6, "Accent"), "grey80")) +
-  guides(fill = guide_legend(nrow = 2)) +
+  guides(fill = guide_legend(nrow = 3)) +
   labs(fill = "Cell type") +
   theme_void() +
   theme(
@@ -595,12 +595,12 @@ Leaf_cell_type_strip <- leaf_cell_type_assignment %>%
     text = element_text(size = 14)
   )
 
-# Leaf_cell_type_strip
+Leaf_cell_type_strip
 
 Leaf_cell_type_mkr_text <- Marker_dotplot_nice_df %>% 
   dplyr::filter(id == 0) %>% 
   ggplot(aes(x = "", y = gene_ID)) +
-  geom_text(aes(label = Symbol)) +
+  geom_text(aes(label = Symbol), fontface = "italic") +
   theme_void()
 
 blank <- data.frame(
@@ -622,7 +622,7 @@ ggsave("../Results/R_output/Cell_type_assignment_plot.png", height = 6, width = 
 
 ```{r}
 MIA_heatmap_color_strip <- wrap_plots(MIA_heatmap +
-                                        labs(tag = "C"), Leaf_cell_type_strip,
+                                        labs(tag = "(b)"), Leaf_cell_type_strip,
            nrow = 2, heights = c(1, 0.02))
 
 MIA_heatmap_color_strip
@@ -670,7 +670,7 @@ leaf_assignment_graph <- leaf_cell_type_assignment %>%
     )
 
 RNA_umap <- wrap_plots(UMAP2 +
-                         labs(tag = "B"), leaf_assignment_graph, 
+                         labs(tag = "(a)"), leaf_assignment_graph, 
            nrow = 2 , heights = c(1, 0.7))
 
 RNA_umap
@@ -801,12 +801,12 @@ DefaultAssay(CRO_multiome) <- "RNA"
 ## Main 1 
 ```{r}
 wrap_plots(
-  combined_UMAPs, 
   RNA_umap,
-  MIA_heatmap_color_strip, 
-  design = c("AA
-              BC"),
-  heights = c(0.3, 1),
+  MIA_heatmap_color_strip,
+  combined_UMAPs, 
+  design = c("AB
+              CC"),
+  heights = c(1, 0.3),
   widths = c(0.9, 1)
   )  
 
@@ -818,10 +818,10 @@ ggsave("../../Multiome_figures/Figure1.png", height = 10, width = 8, bg = "white
 ```{r}
 # wrap_plots(
 #   UMAP_by_rep +
-#     labs(tag = "A"),
+#     labs(tag = "(a)"),
 #   Marker_dot_strip,
 #   cell_proportions +
-#     labs(tag = "C"),
+#     labs(tag = "(c)"),
 #   nrow = 3, 
 #   heights = c(0.35, 1, 0.15)
 # )
@@ -894,7 +894,7 @@ TF_heatmap <- TF_dot_data%>%
   theme_classic() +
   theme(text = element_text(size = 14, color = "black"),
         axis.text = element_text(color = "black"),
-        axis.text.y.left = element_text(hjust = 0.5),
+        axis.text.y.left = element_text(hjust = 0.5, face = "italic"),
         legend.key.width = unit(0.8, "lines"))
 
 wrap_plots(TF_heatmap, Leaf_cell_type_strip,
@@ -930,5 +930,255 @@ leaf_markers3
 ```{r}
 write_excel_csv(leaf_markers3, "../Results/R_output/leaf_marker3.csv")
 ```
+
+# Expression table at cluster level  
+```{r}
+DefaultAssay(CRO_RNA) <- "RNA"
+CRO_RNA <- ScaleData(CRO_RNA)
+```
+
+```{r}
+CPM <- AverageExpression(object = CRO_RNA, slot = "data", group.by = "seurat_clusters")$RNA %>% 
+  as.data.frame() %>% 
+  mutate(gene_id = row.names(.)) %>% 
+  select(gene_id, 1:16)
+
+Z <- AverageExpression(object = CRO_RNA, slot = "scale.data", group.by = "seurat_clusters")$RNA %>% 
+  as.data.frame() %>% 
+  mutate(gene_id = row.names(.)) %>% 
+  select(gene_id, 1:16)
+
+write_excel_csv(CPM, "../Results/R_output/logCPM_table_at_cluster_level.csv")
+write_excel_csv(Z, "../Results/R_output/z_score_table_at_cluster_level.csv")
+```
+# Feature plots for TFs 
+```{r}
+TF_of_focus
+```
+
+```{r}
+ORCA3_FeaturePlot <- FeaturePlot(CRO_RNA, features = "CRO-06G029250.1", order = T) +
+  ggtitle("ORCA3") +
+  theme_void() +
+  theme(plot.title = element_text(hjust = 0.5, face = "italic"))
+
+ORCA4_FeaturePlot <- FeaturePlot(CRO_RNA, features = "CRO-06G029240.1", order = T) +
+  ggtitle("ORCA4") +
+  theme_void() +
+  theme(plot.title = element_text(hjust = 0.5, face = "italic"))
+
+MYC2_FeaturePlot <- FeaturePlot(CRO_RNA, features = "CRO-07G000280.1", order = T) +
+  ggtitle("MYC2") +
+  theme_void() +
+  theme(plot.title = element_text(hjust = 0.5, face = "italic"))
+
+GATA_FeaturePlot <- FeaturePlot(CRO_RNA, features = "CRO-03G006290.2", order = T) +
+  ggtitle("GATA1") +
+  theme_void() +
+  theme(plot.title = element_text(hjust = 0.5, face = "italic"))
+
+wrap_plots(ORCA3_FeaturePlot, ORCA4_FeaturePlot, 
+           MYC2_FeaturePlot, nrow = 1, 
+           design = "A#B#C", widths = c(1, 0.1, 1, 0.1, 1)) &
+  scale_color_gradientn(colours = c("grey90", brewer.pal(9, "YlGnBu"))) &
+  theme(legend.key.width = unit(0.7, "lines"))
+
+ggsave("../Results/R_output/TF_feature_plots.svg", height = 2.2, width = 6, bg = "white")
+ggsave("../Results/R_output/TF_feature_plots.png", height = 2.2, width = 6, bg = "white")
+```
+
+# Sub-cluster idioblast 
+```{r}
+idioblast_sub <- CRO_RNA %>% 
+  subset(seurat_clusters == 8)
+
+idioblast_sub <- FindVariableFeatures(idioblast_sub, nfeatures = 3000)
+idioblast_sub <- ScaleData(idioblast_sub)
+idioblast_sub <- RunPCA(idioblast_sub, features = VariableFeatures(object = idioblast_sub))
+
+idioblast_sub <- FindNeighbors(idioblast_sub, dims = 1:30)
+idioblast_sub <- FindClusters(idioblast_sub, resolution = 0.5)
+idioblast_sub <- RunUMAP(idioblast_sub, dims = 1:30,  min.dist = 0.001, repulsion.strength = 1, n.neighbors = 15, spread = 5)
+
+```
+
+```{r}
+idio_pca <- DimPlot(idioblast_sub, reduction = "pca") +
+  labs(x = "PC1",
+       y = "PC2") +
+  ggtitle("PCA")
+
+idio_umap <- DimPlot(idioblast_sub, reduction = "umap") +
+  labs(x = "UMAP dim1",
+       y = "UMAP dim2") +
+  ggtitle("UMAP")
+
+wrap_plots(idio_pca, idio_umap, nrow = 1, guides = "collect",
+           design = "A#B", widths = c(1, 0.1, 1)) &
+  scale_color_manual(values = brewer.pal(8, "Set2")) &
+  theme_bw() &
+  theme(axis.text = element_blank())
+
+ggsave("../Results/R_output/idioblast_subcluster.svg", width = 5, height = 2.5, bg = "white")
+ggsave("../Results/R_output/idioblast_subcluster.png", width = 5, height = 2.5, bg = "white")
+```
+## DE gene between sub-clusters 
+```{r}
+funct_anno <- read_delim(file = "../Data/cro_v3_anno/cro_v3.functional_annotation.txt",
+                         col_names = F) %>% 
+  mutate(gene_ID = str_replace(X1, "_", "-"))
+
+tail(funct_anno)
+```
+
+```{r}
+DE_btw_sub <- FindMarkers(idioblast_sub, ident.1 = 0, ident.2 = 1, only.pos = F,
+                         logfc.threshold = 0) %>% 
+  # filter(p_val_adj < 0.05) %>% 
+  mutate(gene_ID = row.names(.)) %>% 
+  inner_join(repr_loci, by = "gene_ID") %>% 
+  inner_join(funct_anno %>% 
+               select(gene_ID, X2), by = "gene_ID")
+
+DE_btw_sub
+```
+Photosynthesis and photorespiration genes are DE between two idioblast sub-clusters. 
+```{r}
+DE_btw_sub_annotate <-DE_btw_sub %>% 
+  mutate(rank = rank(avg_log2FC)) %>% 
+  filter(str_detect(gene_ID, "03G003540|06G024620|03G011090|05G028190")) %>% 
+  mutate(name = case_when(
+    str_detect(gene_ID, "03G003540") ~ "SS",
+    str_detect(gene_ID, "06G024620") ~ "THAS2",
+    str_detect(gene_ID, "03G011090") ~ "LHC Protein",
+    str_detect(gene_ID, "05G028190") ~ "Rubisco Activase"
+  ))
+
+DE_btw_sub_annotate
+```
+
+```{r}
+DE_btw_sub %>% 
+  mutate(rank = rank(avg_log2FC)) %>% 
+  mutate(A = case_when(
+    p_val_adj < 0.05 ~1 ,
+    T ~ 0.3
+  )) %>% 
+  ggplot(aes(x = rank, y = avg_log2FC))+
+  geom_point(alpha = 0.8, color = "grey90") + 
+  ggrepel::geom_text_repel(data = DE_btw_sub_annotate, aes(label = name), fontface = "italic") +
+  geom_point(data = DE_btw_sub_annotate, size = 3, shape = 21, color = "black", fill = NA) +
+  #scale_color_gradientn(colours = c("grey90", brewer.pal(9, "YlGnBu")),
+  #                     limits = c(0, 30)) +
+  scale_alpha_identity() +
+  labs(x = "rank log2FC",
+       y = "log2FC") +
+  theme_classic()
+
+ggsave("../Results/R_output/idioblast_sub_DE.svg", width = 5, height = 2.5, bg = "white")
+ggsave("../Results/R_output/idioblast_sub_DE.png", width = 5, height = 2.5, bg = "white")
+```
+
+```{r}
+DE_btw_sub %>% 
+  filter(p_val_adj < 0.05) %>% 
+  arrange(-avg_log2FC)
+```
+## Feature plots at subclusters 
+```{r}
+SS_FeaturePlot <- FeaturePlot(idioblast_sub, features = "CRO-03G003540.1", order = T) +
+  ggtitle("SS") +
+  theme_void() +
+  theme(plot.title = element_text(hjust = 0.5, face = "italic"))
+
+THAS2_FeaturePlot <- FeaturePlot(idioblast_sub, features = "CRO-06G024620.2", order = T) +
+  ggtitle("THAS2") +
+  theme_void() +
+  theme(plot.title = element_text(hjust = 0.5, face = "italic"))
+
  
+LHC_FeaturePlot <- FeaturePlot(idioblast_sub, features = "CRO-03G011090.1", order = T) +
+  ggtitle("Light Harvesting\nComplex Protein") +
+  theme_void() +
+  theme(plot.title = element_text(hjust = 0.5, face = "italic"))
+
+RBA_FeaturePlot <- FeaturePlot(idioblast_sub, features = "CRO-05G028190.2", order = T) +
+  ggtitle("RUBISCO\nActivase") +
+  theme_void() +
+  theme(plot.title = element_text(hjust = 0.5, face = "italic"))
+
+D4H_FeaturePlot <- FeaturePlot(idioblast_sub, features = "CRO-06G013360.2", order = T) +
+  ggtitle("D4H") +
+  theme_void() +
+  theme(plot.title = element_text(hjust = 0.5, face = "italic"))
+
+DAT_FeaturePlot <- FeaturePlot(idioblast_sub, features = "CRO-02G001090.1", order = T) +
+  ggtitle("DAT") +
+  theme_void() +
+  theme(plot.title = element_text(hjust = 0.5, face = "italic"))
+
+wrap_plots(LHC_FeaturePlot, RBA_FeaturePlot,
+           SS_FeaturePlot, THAS2_FeaturePlot, 
+           D4H_FeaturePlot, DAT_FeaturePlot,
+           nrow = 5, 
+           design = "A#B
+                     ###
+                     C#D
+                     ###
+                     E#F", widths = c(1, 0.1), heights = c(1, 0.1, 1, 0.1, 1)) &
+  scale_color_gradientn(colours = c("grey90", brewer.pal(9, "YlGnBu")),
+                        #limit = c(0, 6), breaks = c(1, 2, 3, 4, 5
+                        )&
+  theme(legend.key.width = unit(0.7, "lines"),
+        legend.key.height = unit(0.8, "lines"),)
+
+ggsave("../Results/R_output/idioblast_sub_feature.svg", width = 5, height = 3, bg = "white")
+ggsave("../Results/R_output/idioblast_sub_feature.png", width = 5, height = 3, bg = "white")
+```
+
+
+# Figure for reviewer 
+```{r}
+module_genes <- read_csv("../Results/R_output/Gene_CoExp_Module.csv")
+head(module_genes)
+```
+
+```{r}
+idioblast_module_genes <- module_genes %>% 
+  filter(module == "8") %>% 
+  select(gene_ID, module) %>%
+  rename(LocusID = gene_ID) %>% 
+  inner_join(repr_loci, by = "LocusID")
+
+idioblast_module_genes_heat_data <- DotPlot(CRO_RNA, features = idioblast_module_genes$gene_ID)$data
+head(idioblast_module_genes_heat_data)
+```
+
+```{r}
+idioblast_module_genes_heat_data %>% 
+  ggplot(aes(y = features.plot, x = id)) +
+  # geom_point(aes(size = pct.exp, fill = avg.exp.scaled), shape = 21, color = "white") +
+  geom_tile(aes(fill = avg.exp.scaled)) + 
+  scale_fill_viridis(option = "A", begin = 0, end = 0.9) +
+  guides(size = guide_legend(override.aes = list(fill = "grey40"), nrow = 2)) +
+  labs(x = "Cluster",
+       y = NULL, 
+       fill = "Avg. Exp.",
+       size = "% Exp.") +
+  theme_classic() +
+  theme(text = element_text(size = 14, color = "black"),
+        axis.text = element_text(color = "black"),
+        axis.text.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        legend.position = "top",
+        legend.box = "verticle",
+        legend.key.height = unit(0.7, "lines"))
+
+ggsave("../Results/R_output/idioblast_module_heat.svg", height = 4, width = 3.25)
+ggsave("../Results/R_output/idioblast_module_heat.png", height = 4, width = 3.25)
+```
+```{r}
+idioblast_module_genes_heat_data %>% 
+  slice_max(order_by = avg.exp.scaled, n = 2)
+```
 

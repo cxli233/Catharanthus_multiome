@@ -142,18 +142,7 @@ top.idioblat.peaks %>%
   dplyr::filter(start > 1605477 - 5000) %>% 
   dplyr::filter(end < 1606353 + 5000) 
 ```
-## Check Redox2 peak
-```{r}
-top.epi.peaks %>% 
-  as.data.frame() %>% 
-  dplyr::rename(peak = ".") %>% 
-  separate(peak, c("Chr", "start", "end"), sep = "-", remove = F) %>% 
-  arrange(Chr, start, end) %>% 
-  dplyr::filter(Chr == "Chr5") %>% 
-  dplyr::filter(start > 11149548-500) %>% 
-  dplyr::filter(end < 11155799+500) 
-
-```
+ 
 ## Check 16OMT-T16H2 peaks 
 ```{r}
 top.epi.peaks %>% 
@@ -163,8 +152,14 @@ top.epi.peaks %>%
   arrange(Chr, start, end) %>% 
   dplyr::filter(Chr == "Chr3") %>% 
   dplyr::filter(start > 69982446-2100) %>% 
-  dplyr::filter(end < 69998194+500) 
+  dplyr::filter(end < 69998194+500) %>% 
+  inner_join(da_peaks_Epi %>% 
+               mutate(peak = row.names(.)), by = "peak")
 ```
+ 
+ 
+
+
 ## Check STR peaks
 ```{r}
 top.epi.peaks %>% 
@@ -174,7 +169,9 @@ top.epi.peaks %>%
   arrange(Chr, start, end) %>% 
   dplyr::filter(Chr == "Chr3") %>% 
   dplyr::filter(start > 71678061-10000) %>% 
-  dplyr::filter(end < 71679563+20000) 
+  dplyr::filter(end < 71679563+20000) %>% 
+  inner_join(da_peaks_Epi %>% 
+               mutate(peak = row.names(.)), by = "peak")
 ```
 
 
@@ -255,12 +252,6 @@ top_peak_heatmap <- top_peaks %>%
 
 top_peak_heatmap
 ```
-```{r}
-top_peaks %>% 
-  group_by(class) %>% 
-  filter(cell_type == "Mesophyll") %>% 
-  dplyr::count()
-```
 
 
 ```{r}
@@ -321,7 +312,7 @@ rbind(
   
   top.epi.peaks %>% 
   as.data.frame() %>% 
-    mutate(attribute = "idioblast marker peak")
+    mutate(attribute = "epidermis marker peak")
 ) %>% 
   dplyr::rename(peak = ".") %>% 
   separate(peak, c("Chr", "start", "end"), sep = "-", remove = F) %>% 
