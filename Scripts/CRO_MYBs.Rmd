@@ -28,7 +28,9 @@ library(ape)
 
 library(Seurat)
 ```
-# Data 
+# Data  
+ 
+
 ## Bulk RNA-seq
 ```{r}
 sra_metadata <- read_csv("../../CRO_petal_bulk_RNA/Data/metadata_SRA.csv")
@@ -59,17 +61,15 @@ CRO_RNA@meta.data
 
 ## Tree object
 ```{r}
-CRO_MYB_tree <- read.tree("../Results/CRO_MYB_annotator/RESULTS/Catharanthus_roseus05FastTree_tree.tre")
+CRO_MYB_tree <- read.tree("../Results/Build_tree_out/RAxML_bipartitions.Rmyb_out")
+
+CRO_MYB_tree
 ```
 
 ```{r}
 Tip_table <- data.frame(
   label = CRO_MYB_tree$tip.label
 ) %>% 
-  mutate(source = case_when(
-    str_detect(label, "CRO") ~ "Cath.",
-    T ~ "MYB_annotator"
-  )) %>% 
   mutate(label_2 = case_when(
     str_detect(label, "Arabidopsis") ~ str_extract(label, "MYB\\d+"),
     str_detect(label, "CRO") ~ str_remove_all(label, "CRO_|CRO.|_\\d+"),
@@ -98,32 +98,30 @@ Tip_table <- data.frame(
   )) %>% 
   mutate(label_5 = case_when(
     str_detect(label, "lycoper") ~ str_extract(label, "MYB\\d+"),
+    str_detect(label, "tubero") ~ str_extract(label, "MYB\\d+"),
     T ~ label_3
+  )) %>% 
+  mutate(label_6 = case_when(
+    str_detect(label, "^CRO") ~ paste0("Cr", label_5),
+    str_detect(label, "Arabidopsis") ~ paste0("At", label_5),
+    str_detect(label, "lycoper") ~ paste0("Sl", label_5),
+    str_detect(label, "tubero") ~ paste0("St", label_5),
   )) %>% 
   mutate(index = 1:n()) 
 
 head(Tip_table)
 ```
 
+
 ```{r}
 CRO_MYB_tree_nice <- full_join(
   CRO_MYB_tree, Tip_table, by = "label"
 )
+
+CRO_MYB_tree_nice
 ```
 
 # Make tree 
-```{r}
-tree_all <- CRO_MYB_tree_nice %>% 
-  ggtree(
-    layout = "circular",
-    branch.length = "none"
-  ) +
-  #geom_tiplab(aes(label = label_3), size = 1.5) +
-  geom_tippoint(aes(color = species2))
-
-tree_all
-```
-
 ## Tree with just Arabidopsis and Cath. 
 ```{r}
 Ara_CRO_nodes <- Tip_table %>% 
@@ -143,9 +141,11 @@ tree_at_cro <- subset_tree %>%
   ) +
   geom_tippoint(aes(color = species)) +
   geom_tiplab(aes(label = label_3), size = 2.25) +
+  #geom_nodelab(hjust=-0.5, size= 2.25) +
   scale_color_manual(values = brewer.pal(8, "Set2")[c(1,4)]) +
   theme(
-    legend.position = c(0.1, 0.1)
+    legend.position = c(0.1, 0.1),
+    legend.text = element_text(face = "italic")
   )
 
 tree_at_cro
@@ -170,26 +170,16 @@ ggsave("../Results/R_output/AT_CRO_MYB_tree_2.png", height = 3, width = 3)
 ```
 
 ## Tree with Arabidopsis, Catharanthus, tomato and potato 
-```{r}
-Ara_CRO_Solan_nodes <- Tip_table %>% 
-  filter(species2 %in% c("A. thaliana", "C. roseus", "S. tuberosum", "S. lycopersicum"))
-
-subset_tree2 <- treeio::drop.tip(
-  CRO_MYB_tree_nice, 
-  CRO_MYB_tree$tip.label[!(CRO_MYB_tree$tip.label %in% Ara_CRO_Solan_nodes$label)]
-                        )
-
-write_excel_csv(Ara_CRO_Solan_nodes, "../Results/R_output/Ara_CRO_Solan_nodes.csv")
-```
 
 ```{r}
-subset_tree2 %>% 
+CRO_MYB_tree_nice %>% 
   ggtree(
     layout = "circular",
     branch.length = "none"
   ) +
   geom_tippoint(aes(color = species2)) +
-  geom_tiplab(aes(label = label_5), size = 2.25) +
+  geom_tiplab(aes(label = label_6), size = 2.25, fontface = "italic") +
+  geom_nodelab(hjust = -0.2, size = 2.25) +
   scale_color_manual(values = c(
     brewer.pal(8, "Set2")[c(1,4)],
     "tomato3", "gold"
@@ -197,12 +187,52 @@ subset_tree2 %>%
     ) +
   labs(color = "species") +
   theme(
-   legend.position = c(0.1, 0.1) 
+   legend.position = c(0.1, 0.1),
+   legend.text = element_text(face = "italic")
   ) 
 
 ggsave("../Results/R_output/AT_CRO_Solan_MYB_tree.svg", height = 16, width = 16)
 ggsave("../Results/R_output/AT_CRO_Solan_MYB_tree.pdf", height = 16, width = 16)
 ggsave("../Results/R_output/AT_CRO_Solan_MYB_tree.png", height = 16, width = 16)
+```
+```{r}
+CRO_MYB_tree
+mrca_node <- getMRCA(CRO_MYB_tree, tip = c("CRO_07G002170.1", "CRO_05G006800.1", "CRO_04G033370.1")) 
+
+descendant_tips <- CRO_MYB_tree$tip.label[offspring(CRO_MYB_tree, mrca_node)]
+
+subset_tree_IDM <- treeio::drop.tip(
+  CRO_MYB_tree_nice, 
+  CRO_MYB_tree$tip.label[!(CRO_MYB_tree$tip.label %in% descendant_tips)]
+                        )
+```
+
+```{r}
+subset_tree_IDM %>% 
+  ggtree(
+    #layout = "circular",
+    #branch.length = "none"
+  ) +
+  geom_tippoint(aes(color = species2)) +
+  geom_tiplab(aes(label = label_6), size = 2.5, fontface = "italic") +
+  geom_nodelab(aes(subset = as.numeric(label) >= 70, label = label),
+               size = 1.8, geom = "text", hjust = 2.2, vjust = -0.75) +
+  scale_color_manual(values = c(
+    brewer.pal(8, "Set2")[c(1,4)],
+    "tomato3", "gold"
+  )
+    ) +
+  labs(color = "species") +
+  scale_x_continuous(limits = c(0, 1.5)) +
+  theme(
+   legend.position = c(0.9, 0.1),
+   legend.text = element_text(face = "italic", size = 12),
+   title = element_text(size = 12)
+  ) 
+
+ggsave("../Results/R_output/AT_CRO_Solan_MYB_tree_IDM.svg", height = 7, width = 6.5)
+ggsave("../Results/R_output/AT_CRO_Solan_MYB_tree_IDM.pdf", height = 7, width = 6.5)
+ggsave("../Results/R_output/AT_CRO_Solan_MYB_tree_IDM.png", height = 7, width = 6.5)
 ```
 
 ## Check Li's MYB of interest 
@@ -218,86 +248,9 @@ Tip_table %>%
 * MYB023 - trichome 
 * MYB000 - GL1 - trichome 
 
-```{r}
-mrca_node <- getMRCA(CRO_MYB_tree, tip = c("Arabidopsis-thaliana-At3g27920-At2R-MYB000", "CRO-05G006800.1")) 
-descendant_tips <- CRO_MYB_tree$tip.label[offspring(CRO_MYB_tree, mrca_node)]
-
-subset_tree_05G006800 <- treeio::drop.tip(
-  CRO_MYB_tree_nice, 
-  CRO_MYB_tree$tip.label[!(CRO_MYB_tree$tip.label %in% descendant_tips)]
-                        )
-
-descendant_tips
-```
- 
-```{r}
-subset_tree_05G006800 %>% 
-  ggtree(
-    layout = "circular",
-    branch.length = "none"
-  ) +
-  geom_tippoint(aes(color = species)) +
-  geom_tiplab(aes(label = label), size = 2.25) 
-```
-### 04G033370
-```{r}
-Tip_table %>% 
-  filter(label_2 %in% c("MYB008",
-                        "MYB006")) 
-```
-
-* MYB008
-* MYB006 
-
-```{r}
-mrca_node2 <- getMRCA(CRO_MYB_tree, tip = c("Arabidopsis-thaliana-At4g09460-At2R-MYB006", "CRO-04G033370.1")) 
-descendant_tips2 <- CRO_MYB_tree$tip.label[offspring(CRO_MYB_tree, mrca_node2)]
-
-subset_tree_04G033370 <- treeio::drop.tip(
-  CRO_MYB_tree_nice, 
-  CRO_MYB_tree$tip.label[!(CRO_MYB_tree$tip.label %in% descendant_tips2)]
-                        )
-
-descendant_tips2
-```
-```{r}
-subset_tree_04G033370 %>% 
-  ggtree(
-    layout = "circular",
-    branch.length = "none"
-  ) +
-  geom_tippoint(aes(color = species)) +
-  geom_tiplab(aes(label = label), size = 2.25) 
-```
-
 ### 07G002170
-```{r}
-Tip_table %>% 
-  filter(label_2 %in% c("MYB123")) 
-```
+ 
 * MYB123 TT2 proanthocyanidin accumulation of developing seed
-
-```{r}
-mrca_node3 <- getMRCA(CRO_MYB_tree, tip = c("Arabidopsis-thaliana-At5g35550-At2R-MYB123", "CRO-07G002170.1")) 
-descendant_tips3 <- CRO_MYB_tree$tip.label[offspring(CRO_MYB_tree, mrca_node3)]
-
-subset_tree_07G002170 <- treeio::drop.tip(
-  CRO_MYB_tree_nice, 
-  CRO_MYB_tree$tip.label[!(CRO_MYB_tree$tip.label %in% descendant_tips3)]
-                        )
-
-descendant_tips3
-```
-
-```{r}
-subset_tree_07G002170 %>% 
-  ggtree(
-    layout = "circular",
-    branch.length = "none"
-  ) +
-  geom_tippoint(aes(color = species)) +
-  geom_tiplab(aes(label = label), size = 2.25) 
-```
 
 # Add JA treatment logFC
 ```{r}
@@ -368,7 +321,8 @@ TF_JA_lfc_plot <- TF_candidate_wide %>%
        y = "",
        fill = "log2FC") + 
   theme_classic() +
-  theme(axis.text = element_text(color = "black")) 
+  theme(axis.text = element_text(color = "black"),
+        axis.text.x = element_text(face = "italic")) 
  
 
 TF_JA_tpm_plot <- TF_candidate_wide %>% 
@@ -385,7 +339,8 @@ TF_JA_tpm_plot <- TF_candidate_wide %>%
        y = "treatment",
        fill = "log2(TPM + 1)") + 
   theme_classic() +
-  theme(axis.text = element_text(color = "black")) 
+  theme(axis.text = element_text(color = "black"),
+        axis.text.x = element_text(face = "italic")) 
 
 wrap_plots(TF_JA_tpm_plot, TF_JA_lfc_plot,
            nrow = 2, heights = c(1, 0.6),
@@ -483,7 +438,6 @@ MYB_dotplot
 ```
 
 ## Assign IPAP, Epi, and Id MYBs 
- 
 
 ```{r}
 MYB_classification <- MYB_dotplot %>% 
@@ -561,71 +515,6 @@ JA_MYBs_at_cell_type
 Interesting_MYBs %>% 
   filter(status == "JA up MYB" |
            peak_exp == "Id")
-```
-
-# Wrap plots together 
-```{r}
-tree_at_cro3 <- tree_at_cro2 +
-  labs(color = "Species") +
-  geom_fruit(data = JA_MYBs,
-             geom = geom_point,
-             shape = 21, color = "white",
-             size = 1,
-             aes(y = gene_ID, x = 0, fill = status),
-             pwidth = 0.01) +
-  scale_fill_manual(values  = c("tomato1", "grey30")) +
-  labs(fill = "Response to JA") +
-  ggnewscale::new_scale_fill() +
-  geom_fruit(
-     data = MYB_dotplot,
-     geom = geom_tile,
-     color = "grey90",
-     aes(y = features.plot, x = id2, fill = avg.exp.scaled),
-     axis.params = list(axis = "x", text.size = 2, vjust = -0.15)
-   ) +
-  scale_fill_gradientn(colors = viridis(n = 10, option = "A", begin = 0, end = 0.95)) +
-  labs(fill = "Avg. Exp.\nscRNA-seq") +
-  theme(legend.position = "left")
-
-
-tree_at_cro3
-
-ggsave("../Results/R_output/AT_CRO_MYB_tree_extra.svg", height = 8, width = 6)
-ggsave("../Results/R_output/AT_CRO_MYB_tree_extra.pdf", height = 8, width = 6)
-ggsave("../Results/R_output/AT_CRO_MYB_tree_extra.png", height = 8, width = 6)
-```
-
-## A different version with idioblast MYB1 labeled 
-```{r}
-tree_at_cro2 +
-  geom_tiplab(aes(label = label_4), size = 3, hjust = -0.5, vjust = 0.5) +
-  labs(color = "Species") +
-  geom_fruit(data = JA_MYBs,
-             geom = geom_point,
-             shape = 21, color = "white",
-             size = 1,
-             aes(y = gene_ID, x = 0, fill = status),
-             pwidth = 0.01) +
-  scale_fill_manual(values  = c("tomato1", "grey30")) +
-  labs(fill = "Response to JA") +
-  ggnewscale::new_scale_fill() +
-  geom_fruit(
-     data = MYB_dotplot,
-     geom = geom_tile,
-     color = "grey90",
-     aes(y = features.plot, x = id2, fill = avg.exp.scaled),
-     axis.params = list(axis = "x", text.size = 2, vjust = -0.15)
-   ) +
-  scale_fill_gradientn(colors = viridis(n = 10, option = "A", begin = 0, end = 0.95)) +
-  scale_y_continuous(breaks = seq(from = 3, to = nrow(Tip_table)-2, by = 2)) +
-  labs(fill = "Avg. Exp.\nscRNA-seq") +
-  theme(legend.position = "left",
-        panel.grid.major.y = element_line(),
-        panel.grid.minor.y = element_line())
-
-ggsave("../Results/R_output/AT_CRO_MYB_tree_extra_2.svg", height = 8, width = 6)
-ggsave("../Results/R_output/AT_CRO_MYB_tree_extra_2.pdf", height = 8, width = 6)
-ggsave("../Results/R_output/AT_CRO_MYB_tree_extra_2.png", height = 8, width = 6)
 ```
 
  
