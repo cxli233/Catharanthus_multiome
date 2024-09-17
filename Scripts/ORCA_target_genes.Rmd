@@ -1304,8 +1304,12 @@ ggraph(cro_TF_network_big, x = x, y = y2) +
   scale_fill_manual(values = c(viridis(5), "black"),
                    limits = c( "TF", "MEP", "Iridoid",
                              "Alkaloid", "Late Alkaloid","Transporter")) +
-  scale_edge_color_manual(values = c(brewer.pal(9, "PuRd")[c(2, 3, 4)],
-                                     brewer.pal(9, "PuBu")[c(6, 7, 9)]),
+  scale_edge_color_manual(values = c(brewer.pal(9, "PuRd")[c(2)],
+                                     carto_pal(7, "Sunset")[2],
+                                     carto_pal(7, "TealGrn")[4],
+                                     carto_pal(7, "Teal")[6],
+                                     carto_pal(7, "Burg")[7],
+                                     "black"),
                           limits = c(
                              "O", "O + Sc", "D + A", "D + A + O", "T + O", "T + O + Sc"
                           )) + 
