@@ -1,0 +1,678 @@
+---
+title: "Petal_pip_new"
+author: "Chenxin Li"
+date: "2024-05-14"
+output: html_notebook
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Packages
+```{r}
+library(tidyverse)
+library(Seurat)
+
+library(readxl)
+library(RColorBrewer)
+library(viridis)
+library(rcartocolor)
+library(patchwork)
+```
+
+# Data
+```{r}
+BZ_raw <- Read10X("../Results/cro_bz_em_emptydrops_combined/")
+ca_raw <- Read10X("../Results/cro_ca_em_emptydrops_combined/")
+```
+
+# Object 
+```{r}
+BZ <- CreateSeuratObject(counts = BZ_raw, min.cells = 3, min.features = 200,
+                         project = "BZ")
+
+CA <- CreateSeuratObject(counts = ca_raw, min.cells = 3, min.features = 200,
+                         project = "CA")
+```
+
+```{r}
+BZ
+CA
+```
+# Filtering
+```{r}
+blank <- data.frame(
+  x = 1:10,
+  y = 1:10
+) %>% 
+  ggplot(aes(x = x, y = y)) +
+  theme_void()
+```
+
+## BZ
+```{r}
+BZ_scatter <- BZ@meta.data %>% 
+  ggplot(aes(x = nCount_RNA, y = nFeature_RNA)) +
+  geom_point(alpha = 0.5) +
+  geom_vline(xintercept = 500, color = "red2") +
+  geom_vline(xintercept = 30000, color = "red2") +
+  geom_hline(yintercept = 300, color = "blue1") +
+  geom_hline(yintercept = 10000, color = "blue1") +
+  scale_x_log10() +
+  scale_y_log10() +
+  theme_classic()
+
+BZ_hist1 <- BZ@meta.data %>% 
+  ggplot(aes(x = nCount_RNA)) +
+  geom_histogram(bins = 100) +
+  geom_vline(xintercept = 500, color = "red2") +
+  geom_vline(xintercept = 30000, color = "red2") +
+  scale_x_log10() +
+  theme_classic()
+
+BZ_hist2 <- BZ@meta.data %>% 
+  ggplot(aes(x = nFeature_RNA)) +
+  geom_histogram(bins = 100) +
+  geom_vline(xintercept = 300, color = "blue1") +
+  geom_vline(xintercept = 10000, color = "blue1") +
+  scale_x_log10() +
+  theme_classic() +
+  coord_flip()
+
+wrap_plots(
+  BZ_hist1, blank,
+  BZ_scatter, BZ_hist2,
+  nrow = 2, ncol = 2, 
+  widths = c(1, 0.2), 
+  heights = c(0.2, 1)
+)
+
+ggsave("../Results/R_output/BZ_filtering.svg", height = 4, width = 5, bg = "white")
+ggsave("../Results/R_output/BZ_filtering.png", height = 4, width = 5, bg = "white")
+```
+
+## CA
+```{r}
+CA_scatter <- CA@meta.data %>% 
+  ggplot(aes(x = nCount_RNA, y = nFeature_RNA)) +
+  geom_point(alpha = 0.5) +
+  geom_vline(xintercept = 500, color = "red2") +
+  geom_vline(xintercept = 30000, color = "red2") +
+  geom_hline(yintercept = 300, color = "blue1") +
+  geom_hline(yintercept = 10000, color = "blue1") +
+  scale_x_log10() +
+  scale_y_log10() +
+  theme_classic()
+
+CA_hist1 <- CA@meta.data %>% 
+  ggplot(aes(x = nCount_RNA)) +
+  geom_histogram(bins = 100) +
+  geom_vline(xintercept = 500, color = "red2") +
+  geom_vline(xintercept = 30000, color = "red2") +
+  scale_x_log10() +
+  theme_classic()
+
+CA_hist2 <- CA@meta.data %>% 
+  ggplot(aes(x = nFeature_RNA)) +
+  geom_histogram(bins = 100) +
+  geom_vline(xintercept = 300, color = "blue1") +
+  geom_vline(xintercept = 10000, color = "blue1") +
+  scale_x_log10() +
+  theme_classic() +
+  coord_flip()
+
+wrap_plots(
+  CA_hist1, blank,
+  CA_scatter, CA_hist2,
+  nrow = 2, ncol = 2, 
+  widths = c(1, 0.2), 
+  heights = c(0.2, 1)
+)
+
+ggsave("../Results/R_output/CA_filtering.svg", height = 4, width = 5, bg = "white")
+ggsave("../Results/R_output/CA_filtering.png", height = 4, width = 5, bg = "white")
+```
+```{r}
+BZ_sub <- subset(BZ, subset = nFeature_RNA > 300 &
+                   nCount_RNA > 500)
+
+BZ_sub
+```
+
+```{r}
+CA_sub <- subset(CA, subset = nFeature_RNA > 300 &
+                   nCount_RNA > 500)
+
+CA_sub
+```
+
+```{r}
+lib_summary <- data.frame(
+  ID = c("BZ", "CA"),
+  cells = c(ncol(BZ_sub), 
+            ncol(CA_sub)),
+  median_UMI = c(summary(BZ_sub$nCount_RNA)[3],
+                 summary(CA_sub$nCount_RNA)[3]),
+  median_genes = c(summary(BZ_sub$nFeature_RNA)[3],
+                   summary(CA_sub$nFeature_RNA)[3])
+)
+
+lib_summary
+
+write_excel_csv(lib_summary, "../Results/R_output/lib_summary_petal_pip_new.csv")
+```
+# Normalize and variable features 
+```{r}
+BZ_sub <- NormalizeData(BZ_sub, normalization.method = "LogNormalize", scale.factor = 10000)
+CA_sub <- NormalizeData(CA_sub, normalization.method = "LogNormalize", scale.factor = 10000)
+```
+```{r}
+BZ_sub <- FindVariableFeatures(BZ_sub, selection.method = "vst", nfeatures = 3000)
+CA_sub <- FindVariableFeatures(CA_sub, selection.method = "vst", nfeatures = 3000)
+```
+# Integrate
+```{r}
+RNA.list <- list(BZ_sub, CA_sub)
+features <- SelectIntegrationFeatures(object.list = RNA.list, nfeatures = 3000)
+anchors <- FindIntegrationAnchors(object.list = RNA.list, anchor.features = features) 
+```
+```{r}
+CRO_petals <- IntegrateData(anchorset = anchors)
+CRO_petals 
+```
+# Scale Integrated data 
+```{r}
+CRO_petals <- ScaleData(CRO_petals, verbose = F)
+CRO_petals <- FindVariableFeatures(CRO_petals, selection.method = "vst", nfeatures = 3000)
+  
+CRO_petals@meta.data$run <- CRO_petals@meta.data$orig.ident
+
+CRO_petals@meta.data %>% 
+  group_by(run) %>% 
+  dplyr::count()
+```
+
+# PCA 
+```{r}
+CRO_petals <- RunPCA(CRO_petals, verbose = FALSE, npcs = 50) # run PCA
+
+DimPlot(CRO_petals, reduction = "pca", cols = brewer.pal(8, "Set2")[c(1:3)],
+        split.by = "run", group.by = "run") +
+theme(
+  legend.position = "none"
+)
+```
+
+# Clustering and UMAP 
+```{r}
+CRO_petals <- RunUMAP(CRO_petals, dims = 1:30, 
+                     min.dist = 0.001, repulsion.strength = 1, 
+                     n.neighbors = 30, spread = 1
+                    ) 
+
+CRO_petals <- FindNeighbors(CRO_petals, reduction = "pca", dims = 1:50)
+
+CRO_petals <- FindClusters(CRO_petals, resolution = 0.5)
+
+
+
+UMAP_RNA <- DimPlot(CRO_petals, reduction = "umap", 
+                 label = T, label.size = 5, repel = T) + 
+  theme_void() +
+  theme(
+    text = element_text(size = 14, color = "black", face = "bold"),
+    legend.position = "none"
+  )
+
+UMAP_RNA
+
+ggsave("../Results/R_output/UMAP_petal_pip2.svg", height = 3, width = 3, bg = "white")
+ggsave("../Results/R_output/UMAP_petal_pip2.png", height = 3, width = 3, bg = "white")
+```
+
+## Check replicates 
+```{r}
+DimPlot(CRO_petals, reduction = "umap", 
+        label = T, label.size = 5, repel = T, split.by = "run") +
+  theme_void() +
+  theme(
+    text = element_text(size = 14, color = "black", face = "bold"),
+    legend.position = "none",
+    title = element_text(size = 10)
+  ) +
+  ggtitle("Grouped by replicates\n")  
+  
+
+ggsave("../Results/R_output/UMAP_RNA_by_rep_pip2.svg", height = 3, width = 8, bg = "white")
+ggsave("../Results/R_output/UMAP_RNA_by_rep_pip2.png", height = 3, width = 8, bg = "white")
+```
+```{r}
+saveRDS(CRO_petals, "../Results/R_output/petal_pip2.Rds")
+CRO_petals <- readRDS("../Results/R_output/petal_pip2.Rds")
+```
+
+# Heat map for MIA genes 
+## Annotation 
+```{r}
+repr_gene_models <- read_delim("../Data/cro_v3_anno/cro_v3.gene_models.repr.gff3",
+                               delim = "\t", col_names = F)
+
+repr_loci <- repr_gene_models %>% 
+  dplyr::filter(X3 == "mRNA") %>% 
+  dplyr::select(X1, X4, X5, X7, X9) %>% 
+  separate(X9, c("ID", "Name"), sep = ";") %>% 
+  dplyr::select(-Name) %>% 
+  separate(ID, c("temp", "gene_ID"), sep = "=") %>% 
+  dplyr::select(-temp) %>% 
+  mutate(LocusID = str_sub(gene_ID, start = 1, end = 13)) %>% 
+  mutate(gene_ID = str_replace(gene_ID, "_", "-")) %>% 
+  mutate(LocusID = str_replace(LocusID, "_", "-")) %>% 
+  dplyr::rename(
+    Chr = X1,
+    start = X4,
+    end = X5,
+    strand = X7
+  )
+
+
+head(repr_loci)
+```
+## Pull MIA gens 
+```{r}
+MIA_genes_info <- readRDS(file = "../Data/MIA_genes_info.Rds")
+
+leaf_MIA_genes <- MIA_genes_info %>% 
+  mutate(tag = case_when(
+    str_detect(as.character(gene), "05G028810") ~ "7DLGT",
+    str_detect(as.character(gene), "04G032090") ~ "GPPS(LSU)",
+    str_detect(as.character(gene), "05G017180") ~ "DPAS", 
+    T ~ tag
+    )) %>% 
+  dplyr::filter(is.na(tag) == F) %>% 
+  mutate(order = case_when(
+    str_detect(as.character(gene), "04G032090") ~  9,
+    str_detect(as.character(gene), "05G028810") ~ 15, 
+    str_detect(tag, "THAS2") ~ 40,
+    T ~ order
+  )) %>% 
+  arrange(order) %>%
+  mutate(order2 = case_when(
+    str_detect(as.character(gene), "04G032090") ~  9,
+    str_detect(as.character(gene), "05G028810") ~ 15, 
+    str_detect(as.character(gene), "05G017180") ~ 31,
+    order >= 31 ~ order + 1,
+    T ~ order
+  )) %>% 
+  arrange(order2) %>% 
+  mutate(segment = case_when(
+    str_detect(as.character(gene), "04G032090") ~ "MEP",
+    str_detect(as.character(gene), "05G028810") ~ "Iridoid", 
+    T ~ segment
+  )) %>% 
+  dplyr::filter(is.na(order2) == F) %>% 
+  dplyr::filter(str_detect(as.character(gene), "05G025350") == F) %>% 
+  dplyr::filter(str_detect(as.character(gene), "05G028780") == F) %>% 
+  dplyr::filter(str_detect(tag, "THAS1|THAS3|THAS4|HYS|ISP|GS2") == F) %>% 
+  mutate(tag = case_when(
+    str_detect(tag, "SGD$") ~ "SGD1",
+    #str_detect(tag, "SGD2") ~ "SDG2",
+    str_detect(tag, "GS$") ~ "GS1",
+    str_detect(tag, "MATE") ~ "SLTr",
+    T ~ tag
+  )) %>% 
+  mutate(gene = str_replace_all(gene, "_", "-")) %>% 
+  left_join(repr_loci %>% 
+              dplyr::select(-Chr, -start, -end, -strand), by = c("gene"="LocusID"))
+
+head(leaf_MIA_genes)
+write_excel_csv(leaf_MIA_genes, "../Results/R_output/leaf_MIA_genes.csv")
+```
+```{r}
+MIA_genes_info %>% 
+  filter(is.na(tag) == F)
+```
+
+
+## Plot
+```{r}
+DefaultAssay(CRO_petals) <- "RNA"
+
+Dotplot_for_makers <- leaf_MIA_genes %>% 
+  filter(order > 36) %>% 
+  select(gene, tag, order2) %>% 
+  rbind(
+    data.frame(
+      gene = "CRO-04G032540",
+      tag = "KCS",
+      order2 = -10
+    )
+  ) %>% 
+  rbind(
+    data.frame(
+      gene = "CRO-04G030450",
+      tag = "F3H",
+      order2 = -3
+    )
+  ) %>%
+  rbind(
+    data.frame(
+      gene = "CRO-04G031350",
+      tag = "DFR",
+      order2 = -2
+    )
+  ) %>% 
+  rbind(
+    data.frame(
+      gene = "CRO-07G003740",
+      tag = "ANS",
+      order2 = -1
+    )
+  ) 
+Dotplot_for_makers
+MIA_at_cluster <- DotPlot(CRO_petals, features = c(rev(Dotplot_for_makers$gene)))
+```
+```{r}
+MIA_heatmap <- MIA_at_cluster$data %>% 
+  mutate(internal.tag = row.names(.)) %>% 
+  arrange(internal.tag) %>% 
+  mutate(gene = case_when(
+    is.na(features.plot) ~ str_remove_all(internal.tag, "rna_"),
+    T ~ features.plot %>% as.character()
+  )) %>% 
+  mutate(gene = str_sub(gene, start = 1, end = 13)) %>% 
+  inner_join(Dotplot_for_makers, by = "gene") %>%
+  mutate(gene = reorder(gene, -order2)) %>%
+  mutate(tag = reorder(tag, -order2)) %>% 
+  mutate(id = factor(id, levels = c(
+ "0","2", "13", 
+  "5", "6", 
+  "10",  
+  "1", "4", "8",
+  "3", "7", "9", "11" ,"12", "14" 
+  ))) %>%
+  ggplot(aes(y = tag, x = id)) +
+  geom_point(aes(size = pct.exp, fill = avg.exp.scaled), shape = 21, color = "white") +
+  scale_fill_viridis(option = "A", begin = 0, end = 0.9) +
+  guides(size = guide_legend(override.aes = list(fill = "grey40"))) +
+  labs(x = "Cluster",
+       y = NULL, 
+       fill = "Avg.\nExp.",
+       size = "% Exp.") +
+  theme_classic() +
+  theme(text = element_text(size = 12, color = "black"),
+        axis.text = element_text(color = "black"),
+        axis.text.y.left = element_text(hjust = 0.5, face = "italic"),
+        legend.key.width = unit(0.75, "lines"))
+
+MIA_heatmap
+```
+
+# Assign cell types
+
+* Epidermis: 0, 2, 13 
+* Parenchyma: 1, 3,  4, 8 
+* Pigment: 5, 6
+* Idioblast: 10 
+* Unassigned: 3, 7, 9, 11, 12, 14  
+
+```{r}
+petal_cell_type_assignment <- data.frame(
+  cluster = c(0:14)
+) %>% 
+  mutate(cell_type = case_when(
+    cluster == 0 | 
+      cluster == 2 | 
+      cluster == 13  ~ "Epidermis",
+    cluster == 1 | 
+      cluster == 3 |
+      cluster == 4 |
+      cluster == 8 ~ "Parenchyma",
+    cluster == 5 | 
+      cluster == 6 ~ "Pigment", 
+    cluster == 10 ~ "Idioblast", 
+    T ~ "Unassigned"
+  )) %>% 
+  mutate(cell_type = factor(cell_type, 
+                            levels = c(
+                              "Epidermis", "Pigment", "Idioblast", "Parenchyma", "Unassigned"
+                            ))) %>% 
+  mutate(cluster = factor(cluster, levels = c(
+  "0","2", "13", 
+  "5", "6", 
+  "10",  
+  "1", "4", "8",
+  "3", "7", "9", "11" ,"12", "14"
+  )))
+```
+
+## cell type color strip 
+```{r}
+Petal_cell_type_strip <- petal_cell_type_assignment %>% 
+  ggplot(aes(x = cluster, y = "" )) +
+  geom_tile(aes(fill = cell_type)) +
+   scale_fill_manual(values = c(
+                               brewer.pal(8, "Accent")[2],
+                               brewer.pal(8, "Pastel1")[1],
+                               #brewer.pal(8, "Set2")[6],
+                               brewer.pal(8, "Accent")[6],
+                               "grey90",
+                               "grey80")) +
+  guides(fill = guide_legend(nrow = 3)) +
+  labs(fill = "Cell type") +
+  theme_void() +
+  theme(
+    legend.position = "bottom" ,
+    text = element_text(size = 12)
+  )
+
+wrap_plots(MIA_heatmap, Petal_cell_type_strip, nrow = 2, heights = c(1, 0.05))
+
+
+ggsave("../Results/R_output/late_MIA_dotplot.svg", height = 5, width = 4.5)
+ggsave("../Results/R_output/late_MIA_dotplot.png", height = 5, width = 4.5)
+```
+
+
+# Fraction of idioblasts?
+```{r}
+CRO_petals@meta.data %>% 
+  filter(seurat_clusters==10) %>% 
+  nrow()
+
+nrow(CRO_petals@meta.data)
+
+86 / 5924 * 100
+```
+
+1.45% 
+
+# Inspect de novo marker genes 
+```{r}
+de_novo_markers <- FindAllMarkers(CRO_petals, only.pos = T, min.pct = 0.25, logfc.threshold = 0.25, 
+                                  verbose = F)
+
+head(de_novo_markers)
+```
+```{r}
+annotation <- read_delim("../Data/cro_v3_anno/cro_v3.functional_annotation.txt",
+                         delim = "\t", col_names = F)
+
+head(annotation)
+```
+
+```{r}
+de_novo_markers %>% 
+  left_join(annotation %>% 
+              mutate(X1 = str_remove_all(X1, "\\.\\d+")) %>% 
+              distinct(X1, .keep_all = T) %>% 
+              mutate(gene = str_replace(X1, "_", "-")), by = "gene") %>% 
+  filter(p_val_adj < 0.01) %>%
+write_excel_csv("../Results/R_output/petal_de_novo_markers.csv")
+
+```
+
+## Visualize 
+```{r}
+selected_markers <- de_novo_markers %>% 
+  filter(p_val_adj < 0.01) %>% 
+  group_by(cluster) %>% 
+  slice_max(order_by = avg_log2FC, n = 10) %>% 
+  ungroup() 
+
+selected_markers
+```
+```{r}
+DotPlot(CRO_petals, features = unique(selected_markers$gene)) +
+  coord_flip()+
+  theme(axis.text.y = element_blank())
+```
+
+```{r}
+petal_idioblas_markers <- de_novo_markers %>% 
+  filter(cluster == 10) %>% 
+  filter(p_val_adj < 0.05) %>%
+  left_join(annotation %>% 
+              mutate(X1 = str_remove_all(X1, "\\.\\d+")) %>% 
+              distinct(X1, .keep_all = T) %>% 
+              mutate(gene = str_replace(X1, "_", "-")), by = "gene") 
+```
+
+## Compare with leaf idioblast markers 
+```{r}
+CRO_RNA <- readRDS("../../CRO_multiome/Results/R_output/CRO_RNA.Rds")
+DefaultAssay(CRO_RNA) <- "RNA"
+
+leaf_de_novo_markers <- FindAllMarkers(CRO_RNA, only.pos = T, min.pct = 0.25, logfc.threshold = 0.25, 
+                                  verbose = F)
+
+head(leaf_de_novo_markers)
+```
+```{r}
+leaf_idioblas_markers <- leaf_de_novo_markers %>% 
+  filter(cluster == 8) %>% 
+  filter(p_val_adj < 0.05) %>%
+  left_join(annotation %>% 
+              #mutate(X1 = str_remove_all(X1, "\\.\\d+")) %>% 
+              #distinct(X1, .keep_all = T) %>% 
+              mutate(gene = str_replace(X1, "_", "-")), by = "gene") %>% 
+  mutate(gene2 = str_remove(gene, "\\.\\d+"))
+
+head(leaf_idioblas_markers)
+
+write_excel_csv(leaf_idioblas_markers, "../Results/leaf_idioblast_markers.csv")
+```
+
+```{r}
+B_and_A <- petal_idioblas_markers %>% 
+  filter(gene %in% str_remove(row.names(CRO_RNA),"\\.\\d+")) %>% 
+  nrow() # 106
+
+C_and_A <- leaf_idioblas_markers %>% 
+  filter(gene2 %in% row.names(CRO_petals)) %>% 
+  nrow() # 147 
+
+U <- intersect(
+  str_remove(row.names(CRO_RNA),"\\.\\d+"), 
+  row.names(CRO_petals)
+) %>% 
+  length() # 16709
+
+A <- intersect(
+  petal_idioblas_markers$gene,
+  leaf_idioblas_markers$gene2
+) %>% 
+  length()
+
+B <- B_and_A - A
+C <- C_and_A - A
+D <- U - A - B - C
+  
+fisher.test(rbind(
+  c(A, B),
+  c(C, D)
+))
+
+A/B/(C/D)
+```
+```{r}
+exp <- C_and_A / U
+obs <- A / B_and_A
+
+obs/exp
+
+chisq.test(
+  c(A, B_and_A), p = c(exp, 1 - exp)
+)
+```
+
+```{r}
+union(
+  petal_idioblas_markers$gene,
+  leaf_idioblas_markers$gene2
+) %>% 
+  length()
+
+33/224
+```
+
+
+
+# Check TFs
+```{r}
+TF_dot <- DotPlot(CRO_petals, features = c(
+ "CRO-03G000120", # WRKY
+ "CRO-05G006800", # Myb1
+ "CRO-04G033370", # Myb2
+ "CRO-07G002170" # Myb3 - TT2a 
+))
+
+#TF_dot
+```
+
+```{r}
+TF_dot_nice <- TF_dot$data %>% 
+  mutate(gene = features.plot) %>% 
+  mutate(tag = case_when(
+    str_detect(gene, "03G000120") ~ "IDW1",
+    str_detect(gene, "05G006800") ~ "IDM1",
+    str_detect(gene, "04G033370") ~ "IDM2",
+    str_detect(gene, "07G002170") ~ "IDM3"
+  )) %>% 
+   mutate(id = factor(id, levels = c(
+  "0","2", "13", 
+  "5", "6", 
+  "10",  
+  "1", "4", "8",
+  "3", "7", "9", "11" ,"12", "14"
+  ))) %>%
+  ggplot(aes(y = tag, x = id)) +
+  geom_point(aes(size = pct.exp, fill = avg.exp.scaled), shape = 21, color = "white") +
+  scale_fill_viridis(option = "A", end = 0.9, breaks = c(0, 2)) +
+  guides(size = guide_legend(override.aes = list(fill = "grey40"), 
+                             order = 2, ncol = 1)) +
+  labs(x = "Cluster",
+       y = NULL, 
+       fill = "Avg.\nExp.",
+       size = "% Exp.") +
+  theme_classic() +
+  theme(
+    text = element_text(size = 12, color = "black"),
+    axis.text = element_text(color = "black"),
+    axis.text.y = element_text(hjust = 0.5, face = "italic"),
+    legend.position = "right",
+    legend.box = "vertical", 
+    legend.key.width = unit(0.8, "lines"),
+    legend.title = element_text(hjust = 0.5),
+    strip.text = element_blank() 
+ )
+
+wrap_plots(TF_dot_nice, Petal_cell_type_strip, nrow = 2, heights = c(1, 0.05))
+
+
+ggsave("../Results/R_output/petal_TFs_pip2.svg", height = 4.8, width = 4.5, bg = "white")
+ggsave("../Results/R_output/petal_TFs_pip2.png", height = 4.8, width = 4.5, bg = "white")
+```
+
+ 
+
