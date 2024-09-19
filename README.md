@@ -44,7 +44,7 @@ Scripts used in Catharanthus multiome manuscript
 4. "Protoplast_RNAseq.Rmd" was used to generate Fig. S9d.
 
 ## Re-analysis of petal single cell RNA-seq data 
-1. "Petal_pip_2.Rmd" was used to generate Fig. S11.
+"Petal_pip_2.Rmd" was used to generate Fig. S11.
 
 ## TF overexpression analysis 
 "TF_RNAseq.Rmd" was used to generate Fig. 5 and Fig. S12. 
