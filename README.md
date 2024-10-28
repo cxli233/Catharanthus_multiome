@@ -1,5 +1,5 @@
 # Catharanthus_multiome
-Scripts used in Catharanthus multiome manuscript
+Scripts used in Catharanthus multiome manuscript: https://doi.org/10.1111/nph.20208 
 
 ## Single cell RNA-seq analysis 
 "Multi_GEX_starsolo.Rmd" takes the output of [STARsolo](https://github.com/alexdobin/STAR/blob/master/docs/STARsolo.md) and creates Seurat objects. The script generates Fig. 1a-b, Fig. S2, Fig. S3, Fig. S4, and Fig. S8a-b.
