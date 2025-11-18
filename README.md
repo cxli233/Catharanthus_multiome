@@ -1,5 +1,5 @@
 # Catharanthus_multiome
-Scripts used in Catharanthus multiome manuscript: https://doi.org/10.1111/nph.20208 
+Please cite:  Li, C., Colinas, M., Wood, J.C., Vaillancourt, B., Hamilton, J.P., Jones, S.L., Caputi, L., O'Connor, S.E. and Buell, C.R., 2025. Cell‐type‐aware regulatory landscapes governing monoterpene indole alkaloid biosynthesis in the medicinal plant Catharanthus roseus. New Phytologist, 245(1), pp.347-362. [(https://doi.org/10.1111/nph.20208](https://doi.org/10.1111/nph.20208) 
 
 ## Single cell RNA-seq analysis 
 "Multi_GEX_starsolo.Rmd" takes the output of [STARsolo](https://github.com/alexdobin/STAR/blob/master/docs/STARsolo.md) and creates Seurat objects. The script generates Fig. 1a-b, Fig. S2, Fig. S3, Fig. S4, and Fig. S8a-b.
